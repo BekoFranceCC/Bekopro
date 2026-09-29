@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Beko Pro - Médiathèque Fiches Produits</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen p-4 md:p-8">
+    <div class="max-w-4xl mx-auto">
+        <!-- En-tête -->
+        <header class="mb-6 flex flex-col sm:flex-row justify-between items-center bg-white p-5 rounded-xl shadow-sm border border-gray-200 gap-4">
+            <div>
+                <h1 class="text-2xl font-bold text-gray-800">Beko Pro - Fiches Produits</h1>
+                <p id="current-path" class="text-sm text-gray-500 mt-1">Chemin : /</p>
+            </div>
+            <button id="back-btn" onclick="loadFolder('')" class="hidden px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium transition flex items-center space-x-2">
+                <span>⬅️</span><span>Retour à l'accueil</span>
+            </button>
+        </header>
+
+        <!-- Zone de chargement et liste -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div id="loading" class="text-center py-12 text-gray-500">Chargement de l'arborescence...</div>
+            <div id="file-list" class="divide-y divide-gray-100 hidden">
+                <!-- Les dossiers et fichiers injectés dynamiquement -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const owner = "BekoFranceCC";
+        const repo = "Bekopro";
+
+        async function loadFolder(path = "") {
+            const loading = document.getElementById('loading');
+            const fileList = document.getElementById('file-list');
+            const pathDisplay = document.getElementById('current-path');
+            const backBtn = document.getElementById('back-btn');
+
+            loading.style.display = 'block';
+            fileList.style.display = 'none';
+            pathDisplay.textContent = `Chemin : /${path}`;
+
+            if (path === "") {
+                backBtn.classList.add('hidden');
+            } else {
+                backBtn.classList.remove('hidden');
+            }
+
+            try {
+                const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+                const response = await fetch(url);
+                if (!response.ok) throw new Error("Impossible de récupérer les dossiers.");
+
+                const items = await response.json();
+                fileList.innerHTML = '';
+
+                // Trier : d'abord les dossiers, puis les fichiers par ordre alphabétique
+                items.sort((a, b) => {
+                    if (a.type === b.type) return a.name.localeCompare(b.name);
+                    return a.type === 'dir' ? -1 : 1;
+                });
+
+                items.forEach(item => {
+                    // Ignorer le fichier index.html et les fichiers cachés (.git, etc.)
+                    if (item.name === 'index.html' || item.name.startsWith('.')) return;
+
+                    const row = document.createElement('div');
+                    row.className = "flex items-center justify-between p-4 hover:bg-gray-50 transition";
+
+                    const leftPart = document.createElement('div');
+                    leftPart.className = "flex items-center space-x-3 cursor-pointer flex-grow";
+
+                    const icon = document.createElement('span');
+                    icon.className = "text-xl";
+                    icon.textContent = item.type === 'dir' ? '📁' : '📄';
+
+                    const name = document.createElement('span');
+                    name.className = "font-medium text-gray-700 hover:text-blue-600";
+                    name.textContent = item.name;
+
+                    leftPart.appendChild(icon);
+                    leftPart.appendChild(name);
+
+                    if (item.type === 'dir') {
+                        leftPart.onclick = () => loadFolder(item.path);
+                        row.appendChild(leftPart);
+
+                        const arrow = document.createElement('span');
+                        arrow.className = "text-gray-400 text-sm";
+                        arrow.textContent = "➡️";
+                        row.appendChild(arrow);
+                    } else {
+                        // Pour les fichiers (PDF, etc.), clic pour ouvrir
+                        leftPart.onclick = () => window.open(item.download_url || item.html_url, '_blank');
+                        row.appendChild(leftPart);
+
+                        const actionBtn = document.createElement('a');
+                        actionBtn.href = item.download_url;
+                        actionBtn.target = "_blank";
+                        actionBtn.className = "px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg text-xs font-semibold transition ml-4";
+                        actionBtn.textContent = "Ouvrir / Télécharger";
+                        row.appendChild(actionBtn);
+                    }
+
+                    fileList.appendChild(row);
+                });
+
+                loading.style.display = 'none';
+                fileList.style.display = 'block';
+            } catch (error) {
+                loading.innerHTML = `<p class="text-red-500 py-6">Erreur : ${error.message}</p>`;
+            }
+        }
+
+        // Lancer au chargement de la page
+        loadFolder("");
+    </script>
+</body>
+</html>
