@@ -107,15 +107,53 @@ function parseName(fileName) {
   return { model, brand, code };
 }
 
-/* ====== PHOTO D'UNE FICHE (via le code produit) ====== */
+/* ====== PHOTO D'UNE FICHE ======
+   Cherche dans "Images Beko Pro" une photo dont le nom contient :
+   1) le code produit (ex. 853202101000)  2) sinon le modèle (ex. ALA021BP)
+   Fonctionne aussi avec des sous-dossiers et des noms comme "ALA021BP_face.jpg" */
+const photoCache = {};
 function photoFor(fileName) {
-  const { code } = parseName(fileName);
-  if (!code) return null;
-  if (photos[code]) return photos[code];
-  // tolérance : code tronqué ou avec un chiffre en plus
-  const k = Object.keys(photos).find(p => p.length >= 8 && (p.startsWith(code) || code.startsWith(p)));
-  return k ? photos[k] : null;
+  if (fileName in photoCache) return photoCache[fileName];
+  const { code, model } = parseName(fileName);
+  const keys = Object.keys(photos);
+  const c = norm(code || ""), m = norm(model || "");
+  let k = null;
+  if (c.length >= 8) {
+    k = photos[c] ? c
+      : keys.find(p => p.startsWith(c) || p.includes(c))
+      || keys.find(p => /^\d{8,}/.test(p) && c.startsWith(p.match(/^\d+/)[0]));
+  }
+  if (!k && m.length >= 4) {
+    k = photos[m] ? m : keys.find(p => p.startsWith(m)) || keys.find(p => p.includes(m))
+      // modèle avec suffixe différent (ex. fiche "ALA021BP" / photo "ALA021")
+      || keys.find(p => p.length >= 5 && /\d/.test(p) && m.startsWith(p));
+  }
+  return (photoCache[fileName] = k ? photos[k] : null);
 }
+
+/* ====== DIAGNOSTIC : ajouter #diagnostic à la fin de l'adresse ====== */
+function renderDiagnostic() {
+  const docs = tree.filter(isDoc);
+  const missing = docs.filter(d => !photoFor(base(d.path)));
+  const used = new Set(docs.map(d => photoFor(base(d.path))).filter(Boolean));
+  const unused = Object.entries(photos).filter(([, u]) => !used.has(u)).map(([, u]) => decodeURIComponent(u));
+  $("loading").classList.add("hidden");
+  $("empty").classList.add("hidden");
+  $("breadcrumb").innerHTML = `<a href="#" class="text-[#0057b8] hover:underline">🏠 Accueil</a><span class="text-slate-300">/</span><b>Diagnostic photos</b>`;
+  $("count").textContent = `${docs.length - missing.length} / ${docs.length} fiches avec photo`;
+  const row = (t, sub) => `<li class="py-1.5 border-b border-slate-100"><span class="font-medium">${esc(t)}</span>${sub ? `<br><span class="text-xs text-slate-400">${esc(sub)}</span>` : ""}</li>`;
+  $("grid").innerHTML = `
+    <div class="sm:col-span-2 bg-white rounded-2xl border border-slate-200 p-5">
+      <h3 class="font-bold text-red-600 mb-3">Fiches sans photo (${missing.length})</h3>
+      <ul class="text-sm">${missing.map(d => { const { model, code } = parseName(base(d.path));
+        return row(base(d.path), `Nommer la photo : ${code || model}.jpg`); }).join("") || "<li>Aucune 🎉</li>"}</ul>
+    </div>
+    <div class="sm:col-span-2 bg-white rounded-2xl border border-slate-200 p-5">
+      <h3 class="font-bold text-amber-600 mb-3">Photos non reliées à une fiche (${unused.length})</h3>
+      <ul class="text-sm">${unused.map(u => row(u)).join("") || "<li>Aucune</li>"}</ul>
+    </div>`;
+}
+
 function folderPhoto(path) {
   const own = photos[norm(base(path))];
   if (own) return own;
@@ -268,6 +306,7 @@ function breadcrumb(path, last) {
 function route() {
   const h = decodeURIComponent(location.hash.slice(1));
   $("search").value = "";
+  if (h === "diagnostic") return renderDiagnostic();
   if (h.startsWith("produit=")) renderProduct(h.slice(8));
   else { breadcrumb(h); renderGrid(children(h)); }
   window.scrollTo({ top: 0, behavior: "smooth" });
