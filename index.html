@@ -126,7 +126,7 @@ const countDocs = path => tree.filter(i => i.type === "blob" && i.path.startsWit
 function renderLogo() {
   const exists = tree.some(i => i.path === CONFIG.logo);
   $("logo-zone").innerHTML = exists
-    ? `<img src="${raw(CONFIG.logo)}" alt="Beko Professional" class="h-10 md:h-12 w-auto">`
+    ? `<img src="${raw(CONFIG.logo)}" alt="Beko Professional" class="h-16 md:h-24 w-auto max-w-[320px] object-contain">`
     : `<span class="text-3xl font-extrabold tracking-tight">beko</span>
        <span class="h-7 w-px bg-white/40"></span>
        <span class="text-sm font-semibold tracking-[.25em] text-sky-200">PROFESSIONAL</span>`;
