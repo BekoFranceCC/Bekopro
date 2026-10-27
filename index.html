@@ -3,119 +3,798 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Beko Pro - Médiathèque Fiches Produits</title>
+
+    <title>Beko Professional - Médiathèque Produits</title>
+
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="bg-gray-50 min-h-screen p-4 md:p-8">
-    <div class="max-w-4xl mx-auto">
-        <!-- En-tête -->
-        <header class="mb-6 flex flex-col sm:flex-row justify-between items-center bg-white p-5 rounded-xl shadow-sm border border-gray-200 gap-4">
-            <div>
-                <h1 class="text-2xl font-bold text-gray-800">Beko Pro - Fiches Produits</h1>
-                <p id="current-path" class="text-sm text-gray-500 mt-1">Chemin : /</p>
-            </div>
-            <button id="back-btn" onclick="loadFolder('')" class="hidden px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium transition flex items-center space-x-2">
-                <span>⬅️</span><span>Retour à l'accueil</span>
-            </button>
-        </header>
 
-        <!-- Zone de chargement et liste -->
-        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-            <div id="loading" class="text-center py-12 text-gray-500">Chargement de l'arborescence...</div>
-            <div id="file-list" class="divide-y divide-gray-100 hidden">
-                <!-- Les dossiers et fichiers injectés dynamiquement -->
-            </div>
-        </div>
-    </div>
+    <!-- Police Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
-    <script>
-        const owner = "BekoFranceCC";
-        const repo = "Bekopro";
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
 
-        async function loadFolder(path = "") {
-            const loading = document.getElementById('loading');
-            const fileList = document.getElementById('file-list');
-            const pathDisplay = document.getElementById('current-path');
-            const backBtn = document.getElementById('back-btn');
+        /* Bleu inspiré de l'univers Beko */
+        :root {
+            --beko-blue: #0074c8;
+            --beko-dark: #005a9c;
+        }
 
-            loading.style.display = 'block';
-            fileList.style.display = 'none';
-            pathDisplay.textContent = `Chemin : /${path}`;
+        .product-card {
+            transition:
+                transform 0.25s ease,
+                box-shadow 0.25s ease,
+                border-color 0.25s ease;
+        }
 
-            if (path === "") {
-                backBtn.classList.add('hidden');
-            } else {
-                backBtn.classList.remove('hidden');
-            }
+        .product-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 18px 40px rgba(15, 23, 42, 0.10);
+            border-color: #bae6fd;
+        }
 
-            try {
-                const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
-                const response = await fetch(url);
-                if (!response.ok) throw new Error("Impossible de récupérer les dossiers.");
-
-                const items = await response.json();
-                fileList.innerHTML = '';
-
-                // Trier : d'abord les dossiers, puis les fichiers par ordre alphabétique
-                items.sort((a, b) => {
-                    if (a.type === b.type) return a.name.localeCompare(b.name);
-                    return a.type === 'dir' ? -1 : 1;
-                });
-
-                items.forEach(item => {
-                    // Ignorer le fichier index.html et les fichiers cachés (.git, etc.)
-                    if (item.name === 'index.html' || item.name.startsWith('.')) return;
-
-                    const row = document.createElement('div');
-                    row.className = "flex items-center justify-between p-4 hover:bg-gray-50 transition";
-
-                    const leftPart = document.createElement('div');
-                    leftPart.className = "flex items-center space-x-3 cursor-pointer flex-grow";
-
-                    const icon = document.createElement('span');
-                    icon.className = "text-xl";
-                    icon.textContent = item.type === 'dir' ? '📁' : '📄';
-
-                    const name = document.createElement('span');
-                    name.className = "font-medium text-gray-700 hover:text-blue-600";
-                    name.textContent = item.name;
-
-                    leftPart.appendChild(icon);
-                    leftPart.appendChild(name);
-
-                    if (item.type === 'dir') {
-                        leftPart.onclick = () => loadFolder(item.path);
-                        row.appendChild(leftPart);
-
-                        const arrow = document.createElement('span');
-                        arrow.className = "text-gray-400 text-sm";
-                        arrow.textContent = "➡️";
-                        row.appendChild(arrow);
-                    } else {
-                        // Pour les fichiers (PDF, etc.), clic pour ouvrir
-                        leftPart.onclick = () => window.open(item.download_url || item.html_url, '_blank');
-                        row.appendChild(leftPart);
-
-                        const actionBtn = document.createElement('a');
-                        actionBtn.href = item.download_url;
-                        actionBtn.target = "_blank";
-                        actionBtn.className = "px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg text-xs font-semibold transition ml-4";
-                        actionBtn.textContent = "Ouvrir / Télécharger";
-                        row.appendChild(actionBtn);
-                    }
-
-                    fileList.appendChild(row);
-                });
-
-                loading.style.display = 'none';
-                fileList.style.display = 'block';
-            } catch (error) {
-                loading.innerHTML = `<p class="text-red-500 py-6">Erreur : ${error.message}</p>`;
+        /* Petite animation du loader */
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
             }
         }
 
-        // Lancer au chargement de la page
+        .loader {
+            width: 36px;
+            height: 36px;
+            border: 3px solid #e2e8f0;
+            border-top-color: var(--beko-blue);
+            border-radius: 9999px;
+            animation: spin 0.8s linear infinite;
+        }
+    </style>
+</head>
+
+<body class="bg-slate-50 min-h-screen text-slate-900">
+
+    <!-- ========================= -->
+    <!-- HERO / EN-TÊTE -->
+    <!-- ========================= -->
+
+    <header class="bg-gradient-to-br from-sky-600 via-blue-600 to-blue-800 text-white">
+
+        <div class="max-w-7xl mx-auto px-5 sm:px-8 py-10 md:py-14">
+
+            <!-- Logo / marque -->
+            <div class="flex items-center gap-3 mb-10">
+
+                <div class="bg-white text-blue-600 font-extrabold
+                            text-xl px-4 py-2 rounded-xl shadow-sm">
+                    beko
+                </div>
+
+                <div class="h-7 w-px bg-white/30"></div>
+
+                <div class="text-sm md:text-base font-medium text-white/90">
+                    PROFESSIONAL
+                </div>
+
+            </div>
+
+            <!-- Titre -->
+            <div class="max-w-3xl">
+
+                <div class="inline-flex items-center bg-white/10 border border-white/20
+                            rounded-full px-3 py-1 text-xs font-semibold uppercase
+                            tracking-wider mb-5">
+                    Médiathèque produits
+                </div>
+
+                <h1 class="text-3xl md:text-5xl font-extrabold tracking-tight">
+                    Fiches Produits
+                </h1>
+
+                <p class="mt-4 text-base md:text-lg text-blue-100 max-w-2xl leading-relaxed">
+                    Retrouvez rapidement les fiches et documents
+                    Beko Professional.
+                </p>
+
+            </div>
+
+            <!-- Recherche -->
+            <div class="mt-8 max-w-2xl relative">
+
+                <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                    <svg class="w-5 h-5 text-slate-400"
+                         fill="none"
+                         stroke="currentColor"
+                         viewBox="0 0 24 24">
+                        <path stroke-linecap="round"
+                              stroke-linejoin="round"
+                              stroke-width="2"
+                              d="m21 21-4.35-4.35m2.1-5.4a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0z">
+                        </path>
+                    </svg>
+                </div>
+
+                <input
+                    id="search-input"
+                    type="text"
+                    placeholder="Rechercher une référence ou un document..."
+                    class="w-full pl-12 pr-5 py-4 rounded-xl bg-white
+                           text-slate-900 placeholder-slate-400
+                           shadow-lg border-0 outline-none
+                           focus:ring-4 focus:ring-white/20"
+                >
+
+            </div>
+
+        </div>
+
+    </header>
+
+
+    <!-- ========================= -->
+    <!-- CONTENU PRINCIPAL -->
+    <!-- ========================= -->
+
+    <main class="max-w-7xl mx-auto px-5 sm:px-8 py-8 md:py-10">
+
+
+        <!-- Navigation -->
+        <div class="flex flex-col md:flex-row md:items-center
+                    justify-between gap-4 mb-8">
+
+            <!-- Breadcrumb -->
+            <div>
+
+                <div class="text-xs uppercase tracking-wider text-slate-400
+                            font-semibold mb-2">
+                    Navigation
+                </div>
+
+                <div
+                    id="breadcrumb"
+                    class="flex flex-wrap items-center gap-2 text-sm font-medium">
+                </div>
+
+            </div>
+
+
+            <!-- Nombre d'éléments -->
+            <div
+                id="item-count"
+                class="text-sm text-slate-500 bg-white border border-slate-200
+                       px-4 py-2 rounded-full shadow-sm">
+                Chargement...
+            </div>
+
+        </div>
+
+
+        <!-- Chargement -->
+        <div
+            id="loading"
+            class="flex flex-col items-center justify-center py-24">
+
+            <div class="loader"></div>
+
+            <p class="mt-5 text-sm text-slate-500">
+                Chargement de la médiathèque...
+            </p>
+
+        </div>
+
+
+        <!-- Message erreur -->
+        <div
+            id="error-message"
+            class="hidden bg-red-50 border border-red-200
+                   text-red-700 rounded-2xl p-6 text-center">
+        </div>
+
+
+        <!-- Grille -->
+        <div
+            id="file-list"
+            class="hidden grid grid-cols-1 sm:grid-cols-2
+                   lg:grid-cols-3 xl:grid-cols-4 gap-5">
+        </div>
+
+
+        <!-- Aucun résultat -->
+        <div
+            id="empty-state"
+            class="hidden bg-white border border-slate-200
+                   rounded-2xl py-16 text-center">
+
+            <div class="text-4xl mb-4">🔎</div>
+
+            <h3 class="font-semibold text-slate-800">
+                Aucun document trouvé
+            </h3>
+
+            <p class="text-sm text-slate-500 mt-2">
+                Essayez une autre recherche.
+            </p>
+
+        </div>
+
+    </main>
+
+
+    <!-- ========================= -->
+    <!-- FOOTER -->
+    <!-- ========================= -->
+
+    <footer class="mt-12 border-t border-slate-200 bg-white">
+
+        <div class="max-w-7xl mx-auto px-5 sm:px-8 py-7">
+
+            <div class="flex flex-col sm:flex-row justify-between
+                        gap-2 text-sm text-slate-400">
+
+                <div>
+                    Beko Professional
+                </div>
+
+                <div>
+                    Médiathèque Fiches Produits
+                </div>
+
+            </div>
+
+        </div>
+
+    </footer>
+
+
+    <!-- ========================= -->
+    <!-- JAVASCRIPT -->
+    <!-- ========================= -->
+
+    <script>
+
+        /* =========================
+           PARAMÈTRES GITHUB
+        ========================== */
+
+        const owner = "BekoFranceCC";
+        const repo = "Bekopro";
+
+
+        /* =========================
+           VARIABLES
+        ========================== */
+
+        let currentPath = "";
+        let currentItems = [];
+
+
+        /* =========================
+           ÉLÉMENTS HTML
+        ========================== */
+
+        const loading = document.getElementById("loading");
+        const fileList = document.getElementById("file-list");
+        const breadcrumb = document.getElementById("breadcrumb");
+        const itemCount = document.getElementById("item-count");
+        const searchInput = document.getElementById("search-input");
+        const emptyState = document.getElementById("empty-state");
+        const errorMessage = document.getElementById("error-message");
+
+
+        /* =========================
+           CHARGEMENT D'UN DOSSIER
+        ========================== */
+
+        async function loadFolder(path = "") {
+
+            currentPath = path;
+
+            loading.classList.remove("hidden");
+            fileList.classList.add("hidden");
+            emptyState.classList.add("hidden");
+            errorMessage.classList.add("hidden");
+
+            searchInput.value = "";
+
+            updateBreadcrumb(path);
+
+            try {
+
+                const url =
+                    `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+
+                const response = await fetch(url);
+
+                if (!response.ok) {
+                    throw new Error(
+                        "Impossible de récupérer les documents."
+                    );
+                }
+
+                let items = await response.json();
+
+
+                /*
+                 * Ignorer :
+                 * - index.html
+                 * - fichiers cachés
+                 */
+
+                items = items.filter(item =>
+                    item.name !== "index.html" &&
+                    !item.name.startsWith(".")
+                );
+
+
+                /*
+                 * Tri :
+                 * dossiers en premier,
+                 * puis ordre alphabétique.
+                 */
+
+                items.sort((a, b) => {
+
+                    if (a.type !== b.type) {
+                        return a.type === "dir" ? -1 : 1;
+                    }
+
+                    return a.name.localeCompare(
+                        b.name,
+                        "fr",
+                        {
+                            numeric: true,
+                            sensitivity: "base"
+                        }
+                    );
+
+                });
+
+
+                currentItems = items;
+
+                renderItems(items);
+
+            }
+            catch (error) {
+
+                loading.classList.add("hidden");
+
+                errorMessage.innerHTML = `
+                    <div class="text-3xl mb-3">⚠️</div>
+
+                    <div class="font-semibold">
+                        Impossible de charger la médiathèque
+                    </div>
+
+                    <div class="text-sm mt-2">
+                        ${escapeHtml(error.message)}
+                    </div>
+                `;
+
+                errorMessage.classList.remove("hidden");
+
+                itemCount.textContent = "Erreur";
+
+            }
+
+        }
+
+
+        /* =========================
+           AFFICHAGE DES CARTES
+        ========================== */
+
+        function renderItems(items) {
+
+            fileList.innerHTML = "";
+
+            loading.classList.add("hidden");
+
+
+            if (items.length === 0) {
+
+                fileList.classList.add("hidden");
+                emptyState.classList.remove("hidden");
+
+                itemCount.textContent = "0 élément";
+
+                return;
+
+            }
+
+
+            emptyState.classList.add("hidden");
+            fileList.classList.remove("hidden");
+
+            itemCount.textContent =
+                `${items.length} élément${items.length > 1 ? "s" : ""}`;
+
+
+            items.forEach(item => {
+
+                const card = document.createElement("div");
+
+                card.className =
+                    "product-card group bg-white border border-slate-200 " +
+                    "rounded-2xl p-5 cursor-pointer flex flex-col min-h-[210px]";
+
+
+                const isFolder = item.type === "dir";
+
+                const extension =
+                    item.name.includes(".")
+                        ? item.name.split(".").pop().toLowerCase()
+                        : "";
+
+
+                /* Icône */
+
+                const iconContainer = document.createElement("div");
+
+                iconContainer.className =
+                    isFolder
+                        ? "w-12 h-12 rounded-xl flex items-center justify-center bg-blue-50 text-blue-600 mb-5"
+                        : "w-12 h-12 rounded-xl flex items-center justify-center bg-slate-100 text-slate-600 mb-5";
+
+
+                if (isFolder) {
+
+                    iconContainer.innerHTML = getFolderIcon();
+
+                }
+                else if (extension === "pdf") {
+
+                    iconContainer.className =
+                        "w-12 h-12 rounded-xl flex items-center justify-center bg-red-50 text-red-500 mb-5";
+
+                    iconContainer.innerHTML = getDocumentIcon();
+
+                }
+                else {
+
+                    iconContainer.innerHTML = getDocumentIcon();
+
+                }
+
+
+                /* Type */
+
+                const typeLabel = document.createElement("div");
+
+                typeLabel.className =
+                    "text-[11px] font-bold uppercase tracking-wider mb-2";
+
+
+                if (isFolder) {
+
+                    typeLabel.classList.add("text-blue-600");
+                    typeLabel.textContent = "Catégorie";
+
+                }
+                else {
+
+                    typeLabel.classList.add("text-slate-400");
+
+                    typeLabel.textContent =
+                        extension === "pdf"
+                            ? "Fiche produit • PDF"
+                            : extension.toUpperCase() || "Document";
+
+                }
+
+
+                /* Nom */
+
+                const title = document.createElement("h3");
+
+                title.className =
+                    "font-semibold text-slate-800 leading-snug mb-4 break-words";
+
+                title.textContent =
+                    cleanFileName(item.name);
+
+
+                /* Action */
+
+                const action = document.createElement("div");
+
+                action.className =
+                    "mt-auto pt-4 flex items-center gap-2 " +
+                    "text-sm font-semibold text-blue-600";
+
+
+                action.innerHTML = isFolder
+                    ? `
+                        <span>Voir les documents</span>
+                        <span class="transition-transform
+                                     group-hover:translate-x-1">
+                            →
+                        </span>
+                      `
+                    : `
+                        <span>Voir la fiche</span>
+                        <span class="transition-transform
+                                     group-hover:translate-x-1">
+                            →
+                        </span>
+                      `;
+
+
+                card.appendChild(iconContainer);
+                card.appendChild(typeLabel);
+                card.appendChild(title);
+                card.appendChild(action);
+
+
+                /* Clic */
+
+                if (isFolder) {
+
+                    card.addEventListener(
+                        "click",
+                        () => loadFolder(item.path)
+                    );
+
+                }
+                else {
+
+                    card.addEventListener("click", () => {
+
+                        const fileUrl =
+                            item.download_url || item.html_url;
+
+                        window.open(
+                            fileUrl,
+                            "_blank",
+                            "noopener,noreferrer"
+                        );
+
+                    });
+
+                }
+
+
+                fileList.appendChild(card);
+
+            });
+
+        }
+
+
+        /* =========================
+           RECHERCHE
+        ========================== */
+
+        searchInput.addEventListener("input", function () {
+
+            const query =
+                this.value
+                    .toLowerCase()
+                    .trim();
+
+
+            if (!query) {
+
+                renderItems(currentItems);
+                return;
+
+            }
+
+
+            const filteredItems =
+                currentItems.filter(item =>
+                    item.name
+                        .toLowerCase()
+                        .includes(query)
+                );
+
+
+            renderItems(filteredItems);
+
+        });
+
+
+        /* =========================
+           FIL D'ARIANE
+        ========================== */
+
+        function updateBreadcrumb(path) {
+
+            breadcrumb.innerHTML = "";
+
+
+            /* Accueil */
+
+            const home = document.createElement("button");
+
+            home.className =
+                path
+                    ? "text-blue-600 hover:text-blue-800 transition"
+                    : "text-slate-800 font-semibold";
+
+            home.textContent = "Accueil";
+
+            home.onclick = () => loadFolder("");
+
+            breadcrumb.appendChild(home);
+
+
+            if (!path) {
+                return;
+            }
+
+
+            const parts = path.split("/");
+
+            let builtPath = "";
+
+
+            parts.forEach((part, index) => {
+
+                builtPath +=
+                    (index === 0 ? "" : "/") + part;
+
+
+                /* Séparateur */
+
+                const separator =
+                    document.createElement("span");
+
+                separator.className =
+                    "text-slate-300";
+
+                separator.textContent = "/";
+
+                breadcrumb.appendChild(separator);
+
+
+                /* Élément */
+
+                const crumb =
+                    document.createElement("button");
+
+                crumb.textContent = part;
+
+
+                if (index === parts.length - 1) {
+
+                    crumb.className =
+                        "text-slate-700 font-semibold cursor-default";
+
+                }
+                else {
+
+                    crumb.className =
+                        "text-blue-600 hover:text-blue-800 transition";
+
+                    const targetPath = builtPath;
+
+                    crumb.onclick =
+                        () => loadFolder(targetPath);
+
+                }
+
+
+                breadcrumb.appendChild(crumb);
+
+            });
+
+        }
+
+
+        /* =========================
+           NETTOYAGE NOM DU FICHIER
+        ========================== */
+
+        function cleanFileName(name) {
+
+            /*
+             * On retire seulement l'extension.
+             * Les références / noms restent inchangés.
+             */
+
+            return name.replace(/\.[^/.]+$/, "");
+
+        }
+
+
+        /* =========================
+           SÉCURISATION TEXTE
+        ========================== */
+
+        function escapeHtml(text) {
+
+            const div =
+                document.createElement("div");
+
+            div.textContent = text;
+
+            return div.innerHTML;
+
+        }
+
+
+        /* =========================
+           ICÔNES SVG
+        ========================== */
+
+        function getFolderIcon() {
+
+            return `
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    class="w-6 h-6">
+
+                    <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M3 6.75A2.25 2.25 0 0 1 5.25 4.5h4.19
+                           c.596 0 1.168.237 1.59.659l1.061 1.061
+                           c.422.422.994.659 1.591.659h5.069
+                           A2.25 2.25 0 0 1 21 9.129v8.621
+                           A2.25 2.25 0 0 1 18.75 20H5.25
+                           A2.25 2.25 0 0 1 3 17.75v-11Z"
+                    />
+
+                </svg>
+            `;
+
+        }
+
+
+        function getDocumentIcon() {
+
+            return `
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    class="w-6 h-6">
+
+                    <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M14.25 2.25H6.75A2.25 2.25 0 0 0
+                           4.5 4.5v15A2.25 2.25 0 0 0
+                           6.75 21.75h10.5a2.25 2.25 0 0 0
+                           2.25-2.25V7.5L14.25 2.25Z"
+                    />
+
+                    <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M14.25 2.25V7.5h5.25"
+                    />
+
+                    <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M8.25 13.5h7.5M8.25 17.25h5.25"
+                    />
+
+                </svg>
+            `;
+
+        }
+
+
+        /* =========================
+           DÉMARRAGE
+        ========================== */
+
         loadFolder("");
+
     </script>
+
 </body>
 </html>
