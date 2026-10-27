@@ -10,7 +10,6 @@
   body { font-family: 'Inter', sans-serif; }
   .hero { background: radial-gradient(circle at 85% 20%, rgba(0,153,255,.35), transparent 45%),
                       linear-gradient(135deg, #001a3d 0%, #00306e 55%, #0057b8 100%); }
-  /* Logo bleu marine passé en blanc pour être lisible sur le fond foncé */
   .logo-white { filter: brightness(0) invert(1); }
   .card { transition: transform .25s ease, box-shadow .25s ease; }
   .card:hover { transform: translateY(-6px); box-shadow: 0 24px 50px rgba(0,40,90,.15); }
@@ -31,16 +30,14 @@
       <a href="#" id="logo-zone" class="flex items-center gap-3"></a>
       <span class="hidden sm:inline text-xs uppercase tracking-[.2em] text-blue-200">Espace professionnels</span>
     </div>
-
     <div class="mt-10 max-w-3xl">
       <p class="text-xs font-bold uppercase tracking-[.25em] text-sky-300 mb-4">Médiathèque produits</p>
       <h1 class="text-4xl md:text-6xl font-extrabold tracking-tight">Fiches Produits</h1>
       <p class="mt-4 text-lg text-blue-100/90">Toute la gamme Beko Professional : buanderie, cuisson, froid et laverie.</p>
     </div>
-
     <div class="mt-8 max-w-2xl relative">
       <svg class="w-5 h-5 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-width="2" d="m21 21-4.35-4.35m2.1-5.4a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0z"/></svg>
-      <input id="search" type="text" placeholder="Rechercher une référence dans toute la gamme..."
+      <input id="search" type="text" placeholder="Rechercher une référence, un modèle ou un code EAN..."
         class="w-full pl-12 pr-5 py-4 rounded-2xl bg-white text-slate-900 placeholder-slate-400 shadow-2xl outline-none focus:ring-4 focus:ring-sky-400/40">
     </div>
   </div>
@@ -59,6 +56,7 @@
   </div>
   <div id="error" class="hidden bg-red-50 border border-red-200 text-red-700 rounded-2xl p-6 text-center"></div>
   <div id="grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"></div>
+  <div id="product" class="hidden"></div>
   <div id="empty" class="hidden text-center py-20 text-slate-500">Aucun document trouvé.</div>
 </main>
 
@@ -73,13 +71,13 @@
 const CONFIG = {
   owner: "BekoFranceCC",
   repo: "Bekopro",
-  imagesFolder: "Images Beko Pro",               // dossier des photos (masqué dans la navigation)
-  logo: "Images Beko Pro/logo-beko-pro.png"       // chemin du logo dans le dépôt
+  imagesFolder: "Images Beko Pro",
+  logo: "Images Beko Pro/logo-beko-pro.png"
 };
 const ICONS = { BUANDERIE:"🧺", CUISSON:"🔥", FROID:"❄️", LAVERIE:"🍽️" };
 const IMG_EXT = ["jpg","jpeg","png","webp","gif"];
 
-let tree = [], branch = "main", images = [];
+let tree = [], branch = "main", photos = {};
 const $ = id => document.getElementById(id);
 
 /* ====== OUTILS ====== */
@@ -87,71 +85,84 @@ const ext   = n => n.includes(".") ? n.split(".").pop().toLowerCase() : "";
 const base  = p => p.split("/").pop();
 const clean = n => n.replace(/\.[^/.]+$/, "");
 const norm  = n => clean(n).toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^A-Z0-9]/g,"");
-const raw   = p => `https://raw.githubusercontent.com/${CONFIG.owner}/${CONFIG.repo}/${branch}/` + p.split("/").map(encodeURIComponent).join("/");
+const url   = p => p.split("/").map(encodeURIComponent).join("/");     // lien relatif (GitHub Pages)
 const esc   = t => { const d = document.createElement("div"); d.textContent = t; return d.innerHTML; };
 const isHidden = p => p.split("/").some(s => s.startsWith(".")) || p === "index.html";
 const inImages = p => p === CONFIG.imagesFolder || p.startsWith(CONFIG.imagesFolder + "/");
+const isDoc = i => i.type === "blob" && !inImages(i.path) && !IMG_EXT.includes(ext(i.path));
 
-/* ====== CHARGEMENT DU DÉPÔT (1 seule fois, mis en cache) ====== */
+/* ====== LECTURE DU NOM DE FICHE ======
+   ex : "Fiche produit_LL_Beko Pro_ALA021BP_853202101000.pdf"
+   -> marque "Beko Pro", modèle "ALA021BP", code "853202101000" */
+function parseName(fileName) {
+  const parts = clean(fileName).split("_").map(s => s.trim()).filter(Boolean);
+  const idx = parts.findIndex(s => /^\d{8,}$/.test(s));
+  const code = idx >= 0 ? parts[idx] : (clean(fileName).match(/\d{8,}/) || [""])[0];
+  let model = clean(fileName), brand = "";
+  if (idx > 0) {
+    model = parts[idx - 1];
+    brand = idx > 1 ? parts[idx - 2] : "";
+    if (/^fiche/i.test(brand) || brand.length <= 3) brand = "";
+  }
+  return { model, brand, code };
+}
+
+/* ====== PHOTO D'UNE FICHE (via le code produit) ====== */
+function photoFor(fileName) {
+  const { code } = parseName(fileName);
+  if (!code) return null;
+  if (photos[code]) return photos[code];
+  // tolérance : code tronqué ou avec un chiffre en plus
+  const k = Object.keys(photos).find(p => p.length >= 8 && (p.startsWith(code) || code.startsWith(p)));
+  return k ? photos[k] : null;
+}
+function folderPhoto(path) {
+  const own = photos[norm(base(path))];
+  if (own) return own;
+  const doc = tree.find(i => isDoc(i) && i.path.startsWith(path + "/") && photoFor(base(i.path)));
+  return doc ? photoFor(base(doc.path)) : null;
+}
+const countDocs = path => tree.filter(i => isDoc(i) && i.path.startsWith(path + "/")).length;
+
+/* ====== CHARGEMENT DU DÉPÔT ====== */
 async function loadTree() {
   const cached = sessionStorage.getItem("bekopro-tree");
   if (cached) { ({ tree, branch } = JSON.parse(cached)); return; }
-  const repo = await fetch(`https://api.github.com/repos/${CONFIG.owner}/${CONFIG.repo}`);
-  if (!repo.ok) throw new Error("Dépôt GitHub inaccessible (limite d'appels atteinte ? réessayez dans quelques minutes).");
-  branch = (await repo.json()).default_branch;
+  const r = await fetch(`https://api.github.com/repos/${CONFIG.owner}/${CONFIG.repo}`);
+  if (!r.ok) throw new Error("Dépôt GitHub inaccessible (limite d'appels atteinte ? réessayez dans quelques minutes).");
+  branch = (await r.json()).default_branch;
   const res = await fetch(`https://api.github.com/repos/${CONFIG.owner}/${CONFIG.repo}/git/trees/${branch}?recursive=1`);
   if (!res.ok) throw new Error("Impossible de lire l'arborescence.");
   tree = (await res.json()).tree.filter(i => !isHidden(i.path));
   sessionStorage.setItem("bekopro-tree", JSON.stringify({ tree, branch }));
 }
 
-/* ====== PHOTOS ====== */
-function findImage(name) {
-  const key = norm(name);
-  if (key.length < 3) return null;
-  let best = null, bestLen = 0;
-  for (const img of images) {
-    if (img.key === key) return img.url;
-    if (img.key.length >= 4 && key.includes(img.key) && img.key.length > bestLen) { best = img.url; bestLen = img.key.length; }
-  }
-  return best;
-}
-function folderImage(path) {
-  const own = findImage(base(path));
-  if (own) return own;
-  const doc = tree.find(i => i.type === "blob" && i.path.startsWith(path + "/") && !IMG_EXT.includes(ext(i.path)) && findImage(base(i.path)));
-  return doc ? findImage(base(doc.path)) : null;
-}
-const countDocs = path => tree.filter(i => i.type === "blob" && i.path.startsWith(path + "/") && !IMG_EXT.includes(ext(i.path))).length;
-
 /* ====== LOGO ====== */
 function renderLogo() {
   const exists = tree.some(i => i.path === CONFIG.logo);
   $("logo-zone").innerHTML = exists
-    ? `<img src="${raw(CONFIG.logo)}?v=${Date.now()}" alt="Beko Professional" class="logo-white h-16 md:h-20 w-auto">`
-    : `<span class="text-3xl font-extrabold tracking-tight">beko</span>
-       <span class="h-7 w-px bg-white/40"></span>
+    ? `<img src="${url(CONFIG.logo)}?v=${Date.now()}" alt="Beko Professional" class="logo-white h-16 md:h-20 w-auto">`
+    : `<span class="text-3xl font-extrabold tracking-tight">beko</span><span class="h-7 w-px bg-white/40"></span>
        <span class="text-sm font-semibold tracking-[.25em] text-sky-200">PROFESSIONAL</span>`;
 }
 
-/* ====== AFFICHAGE ====== */
+/* ====== LISTES ====== */
 function children(path) {
   const depth = path ? path.split("/").length + 1 : 1;
-  return tree.filter(i =>
-    i.path.split("/").length === depth &&
-    (path ? i.path.startsWith(path + "/") : true) &&
-    !inImages(i.path)
-  ).sort((a, b) => a.type !== b.type ? (a.type === "tree" ? -1 : 1)
-                  : base(a.path).localeCompare(base(b.path), "fr", { numeric: true }));
+  return tree.filter(i => i.path.split("/").length === depth &&
+      (path ? i.path.startsWith(path + "/") : true) && !inImages(i.path) &&
+      (i.type === "tree" || isDoc(i)))
+    .sort((a, b) => a.type !== b.type ? (a.type === "tree" ? -1 : 1)
+                    : base(a.path).localeCompare(base(b.path), "fr", { numeric: true }));
 }
 
 function folderCard(item, i) {
-  const name = base(item.path), img = folderImage(item.path), n = countDocs(item.path);
+  const name = base(item.path), img = folderPhoto(item.path), n = countDocs(item.path);
   const root = item.path.split("/")[0].toUpperCase();
   return `
-  <div class="card fade bg-white rounded-3xl overflow-hidden border border-slate-200 cursor-pointer group" style="animation-delay:${i*40}ms" data-folder="${esc(item.path)}">
-    <div class="h-48 bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center overflow-hidden relative">
-      ${img ? `<img src="${img}" loading="lazy" class="zoom max-h-40 object-contain" alt="">`
+  <a href="#${encodeURIComponent(item.path)}" class="card fade bg-white rounded-3xl overflow-hidden border border-slate-200 group block" style="animation-delay:${i*40}ms">
+    <div class="h-48 bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center overflow-hidden relative p-4">
+      ${img ? `<img src="${img}" loading="lazy" class="zoom max-h-40 object-contain mix-blend-multiply" alt="">`
             : `<span class="zoom text-6xl">${ICONS[root] || "📁"}</span>`}
       <span class="absolute top-3 right-3 bg-white/90 text-[#00306e] text-xs font-bold px-3 py-1 rounded-full shadow">${n} fiche${n>1?"s":""}</span>
     </div>
@@ -160,75 +171,126 @@ function folderCard(item, i) {
       <h3 class="mt-1 text-lg font-bold text-slate-900">${esc(name)}</h3>
       <p class="mt-4 text-sm font-semibold text-[#0057b8] flex items-center gap-2">Découvrir <span class="transition group-hover:translate-x-1">→</span></p>
     </div>
-  </div>`;
+  </a>`;
 }
 
-function fileCard(item, i, showPath) {
-  const name = base(item.path), img = findImage(name), url = raw(item.path), e = ext(name);
+function productCard(item, i, showPath) {
+  const name = base(item.path), img = photoFor(name), { model, brand, code } = parseName(name);
   const parent = item.path.split("/").slice(0, -1).join(" › ");
   return `
-  <a href="${url}" target="_blank" rel="noopener" class="card fade bg-white rounded-3xl overflow-hidden border border-slate-200 group flex flex-col" style="animation-delay:${i*40}ms">
-    <div class="h-56 bg-white flex items-center justify-center overflow-hidden p-5 relative">
-      ${img ? `<img src="${img}" loading="lazy" class="zoom max-h-full object-contain" alt="${esc(clean(name))}">`
-            : `<div class="w-20 h-24 rounded-xl bg-red-50 text-red-500 flex items-center justify-center font-extrabold">${(e||"DOC").toUpperCase()}</div>`}
-      <span class="absolute top-3 left-3 bg-[#001a3d] text-white text-[10px] font-bold px-2.5 py-1 rounded-full uppercase">${e || "doc"}</span>
+  <a href="#produit=${encodeURIComponent(item.path)}" class="card fade bg-white rounded-3xl overflow-hidden border border-slate-200 group flex flex-col" style="animation-delay:${i*40}ms">
+    <div class="h-60 bg-white flex items-center justify-center overflow-hidden p-6 relative">
+      ${img ? `<img src="${img}" loading="lazy" class="zoom max-h-full object-contain" alt="${esc(model)}">`
+            : `<div class="w-20 h-24 rounded-xl bg-red-50 text-red-500 flex items-center justify-center font-extrabold">PDF</div>`}
+      ${brand ? `<span class="absolute top-3 left-3 bg-[#001a3d] text-white text-[10px] font-bold px-2.5 py-1 rounded-full uppercase">${esc(brand)}</span>` : ""}
     </div>
     <div class="p-5 border-t border-slate-100 flex flex-col flex-1">
-      ${showPath ? `<p class="text-[11px] text-slate-400 mb-1">${esc(parent)}</p>` : `<p class="text-[11px] font-bold uppercase tracking-widest text-sky-600">Fiche produit</p>`}
-      <h3 class="mt-1 font-bold text-slate-900 leading-snug break-words">${esc(clean(name))}</h3>
+      <p class="text-[11px] ${showPath ? "text-slate-400" : "font-bold uppercase tracking-widest text-sky-600"}">${showPath ? esc(parent) : "Fiche produit"}</p>
+      <h3 class="mt-1 text-lg font-bold text-slate-900 break-words">${esc(model)}</h3>
+      ${code ? `<p class="text-xs text-slate-400 mt-1">Code : ${esc(code)}</p>` : ""}
       <span class="mt-auto pt-4 inline-flex items-center justify-center gap-2 w-full rounded-xl bg-[#0057b8] group-hover:bg-[#00306e] text-white text-sm font-semibold py-2.5 transition">
-        Voir la fiche ↗
+        Voir le produit →
       </span>
     </div>
   </a>`;
 }
 
-function render(items, showPath = false) {
+function renderGrid(items, showPath = false) {
   $("loading").classList.add("hidden");
+  $("product").classList.add("hidden");
+  $("grid").classList.remove("hidden");
   $("empty").classList.toggle("hidden", items.length > 0);
-  $("grid").innerHTML = items.map((it, i) => it.type === "tree" ? folderCard(it, i) : fileCard(it, i, showPath)).join("");
+  $("grid").innerHTML = items.map((it, i) => it.type === "tree" ? folderCard(it, i) : productCard(it, i, showPath)).join("");
   $("count").textContent = `${items.length} élément${items.length > 1 ? "s" : ""}`;
-  document.querySelectorAll("[data-folder]").forEach(c => c.onclick = () => location.hash = encodeURIComponent(c.dataset.folder));
 }
 
-function breadcrumb(path) {
+/* ====== PAGE PRODUIT ====== */
+function renderProduct(path) {
+  const item = tree.find(i => i.path === path);
+  if (!item) { location.hash = ""; return; }
+  const name = base(path), img = photoFor(name), { model, brand, code } = parseName(name);
+  const folder = path.split("/").slice(0, -1);
+  const pdf = url(path);
+  const isPdf = ext(name) === "pdf";
+
+  breadcrumb(folder.join("/"), model);
+  $("count").textContent = "";
+  $("loading").classList.add("hidden");
+  $("grid").classList.add("hidden");
+  $("empty").classList.add("hidden");
+  $("product").classList.remove("hidden");
+  $("product").innerHTML = `
+  <div class="fade bg-white rounded-3xl border border-slate-200 overflow-hidden">
+    <div class="grid lg:grid-cols-2">
+      <div class="bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center p-10 min-h-[360px]">
+        ${img ? `<img src="${img}" class="max-h-[420px] object-contain mix-blend-multiply" alt="${esc(model)}">`
+              : `<div class="text-center text-slate-400"><div class="text-6xl mb-3">📷</div>Photo non disponible</div>`}
+      </div>
+      <div class="p-8 md:p-10 flex flex-col">
+        <p class="text-xs font-bold uppercase tracking-[.2em] text-sky-600">${esc(folder.join(" › "))}</p>
+        <h2 class="mt-3 text-3xl md:text-4xl font-extrabold text-slate-900 break-words">${esc(model)}</h2>
+        <dl class="mt-6 grid grid-cols-2 gap-4">
+          ${brand ? `<div class="bg-slate-50 rounded-xl p-4"><dt class="text-xs text-slate-400 uppercase">Marque</dt><dd class="font-semibold mt-1">${esc(brand)}</dd></div>` : ""}
+          ${code ? `<div class="bg-slate-50 rounded-xl p-4"><dt class="text-xs text-slate-400 uppercase">Code / EAN</dt><dd class="font-semibold mt-1">${esc(code)}</dd></div>` : ""}
+          <div class="bg-slate-50 rounded-xl p-4"><dt class="text-xs text-slate-400 uppercase">Gamme</dt><dd class="font-semibold mt-1">${esc(folder[folder.length-1] || "")}</dd></div>
+          <div class="bg-slate-50 rounded-xl p-4"><dt class="text-xs text-slate-400 uppercase">Document</dt><dd class="font-semibold mt-1">${ext(name).toUpperCase()}</dd></div>
+        </dl>
+        <div class="mt-8 flex flex-col sm:flex-row gap-3">
+          <a href="${pdf}" target="_blank" rel="noopener" class="flex-1 text-center rounded-xl bg-[#0057b8] hover:bg-[#00306e] text-white font-semibold py-3 transition">Ouvrir la fiche ↗</a>
+          <a href="${pdf}" download class="flex-1 text-center rounded-xl border border-slate-300 hover:bg-slate-50 font-semibold py-3 transition">Télécharger</a>
+          ${img ? `<a href="${img}" download class="flex-1 text-center rounded-xl border border-slate-300 hover:bg-slate-50 font-semibold py-3 transition">Photo HD</a>` : ""}
+        </div>
+        <a href="#${encodeURIComponent(folder.join("/"))}" class="mt-6 text-sm font-semibold text-[#0057b8] hover:underline">← Retour à ${esc(folder[folder.length-1] || "l'accueil")}</a>
+      </div>
+    </div>
+    ${isPdf ? `<div class="border-t border-slate-200 bg-slate-50 p-4 md:p-6">
+      <iframe src="${pdf}#view=FitH" class="w-full h-[80vh] rounded-xl border border-slate-200 bg-white" title="Fiche ${esc(model)}"></iframe>
+    </div>` : ""}
+  </div>`;
+}
+
+/* ====== FIL D'ARIANE ====== */
+function breadcrumb(path, last) {
   const parts = path ? path.split("/") : [];
-  let html = `<a href="#" class="${path ? "text-[#0057b8] hover:underline" : "text-slate-900 font-bold"}">🏠 Accueil</a>`;
+  let html = `<a href="#" class="${path || last ? "text-[#0057b8] hover:underline" : "text-slate-900 font-bold"}">🏠 Accueil</a>`;
   parts.forEach((p, i) => {
     const target = parts.slice(0, i + 1).join("/");
-    html += `<span class="text-slate-300">/</span>` + (i === parts.length - 1
+    const isLast = i === parts.length - 1 && !last;
+    html += `<span class="text-slate-300">/</span>` + (isLast
       ? `<span class="font-bold text-slate-900">${esc(p)}</span>`
       : `<a href="#${encodeURIComponent(target)}" class="text-[#0057b8] hover:underline">${esc(p)}</a>`);
   });
+  if (last) html += `<span class="text-slate-300">/</span><span class="font-bold text-slate-900">${esc(last)}</span>`;
   $("breadcrumb").innerHTML = html;
 }
 
-function showFolder() {
-  const path = decodeURIComponent(location.hash.slice(1));
+/* ====== ROUTAGE ====== */
+function route() {
+  const h = decodeURIComponent(location.hash.slice(1));
   $("search").value = "";
-  breadcrumb(path);
-  render(children(path));
+  if (h.startsWith("produit=")) renderProduct(h.slice(8));
+  else { breadcrumb(h); renderGrid(children(h)); }
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-/* Recherche dans toute la gamme */
+/* Recherche dans toute la gamme (modèle, code EAN, nom de fichier) */
 $("search").addEventListener("input", e => {
   const q = norm(e.target.value);
-  if (!q) return showFolder();
-  const res = tree.filter(i => i.type === "blob" && !inImages(i.path) && !IMG_EXT.includes(ext(i.path)) && norm(i.path).includes(q));
+  if (!q) return route();
+  const res = tree.filter(i => isDoc(i) && norm(i.path).includes(q));
   $("breadcrumb").innerHTML = `<span class="text-slate-900 font-bold">Résultats pour « ${esc(e.target.value)} »</span>`;
-  render(res, true);
+  renderGrid(res, true);
 });
 
 /* ====== DÉMARRAGE ====== */
 (async () => {
   try {
     await loadTree();
-    images = tree.filter(i => i.type === "blob" && inImages(i.path) && IMG_EXT.includes(ext(i.path)) && i.path !== CONFIG.logo)
-                 .map(i => ({ key: norm(base(i.path)), url: raw(i.path) }));
+    tree.filter(i => i.type === "blob" && inImages(i.path) && IMG_EXT.includes(ext(i.path)) && i.path !== CONFIG.logo)
+        .forEach(i => { photos[norm(base(i.path))] = url(i.path); });
     renderLogo();
-    window.addEventListener("hashchange", showFolder);
-    showFolder();
+    window.addEventListener("hashchange", route);
+    route();
   } catch (err) {
     $("loading").classList.add("hidden");
     $("error").classList.remove("hidden");
