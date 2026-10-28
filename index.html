@@ -253,8 +253,7 @@ function productCard(item, i, showPath) {
     <div class="h-60 bg-white flex items-center justify-center overflow-hidden p-6 relative">
       ${img ? `<img src="${img}" loading="lazy" class="zoom max-h-full object-contain" alt="${esc(model)}">`
             : `<div class="w-20 h-24 rounded-xl bg-red-50 text-red-500 flex items-center justify-center font-extrabold">PDF</div>`}
-      ${brand ? `<span class="absolute top-3 left-3 bg-[#001a3d] text-white text-[10px] font-bold px-2.5 py-1 rounded-full uppercase">${esc(brand)}</span>` : ""}
-      ${gallery.length > 1 ? `<span class="absolute top-3 right-3 bg-white/95 text-[#00306e] text-[11px] font-bold px-2.5 py-1 rounded-full shadow">📷 ${gallery.length}</span>` : ""}
+           ${gallery.length > 1 ? `<span class="absolute top-3 right-3 bg-white/95 text-[#00306e] text-[11px] font-bold px-2.5 py-1 rounded-full shadow">📷 ${gallery.length}</span>` : ""}
     </div>
     <div class="p-5 border-t border-slate-100 flex flex-col flex-1">
       <p class="text-[11px] ${showPath ? "text-slate-400" : "font-bold uppercase tracking-widest text-sky-600"}">${showPath ? esc(parent) : "Fiche produit"}</p>
@@ -304,8 +303,7 @@ function renderProduct(path) {
         <p class="text-xs font-bold uppercase tracking-[.2em] text-sky-600">${esc(folder.join(" › "))}</p>
         <h2 class="mt-3 text-3xl md:text-4xl font-extrabold text-slate-900 break-words">${esc(model)}</h2>
         <dl class="mt-6 grid grid-cols-2 gap-4">
-          ${brand ? `<div class="bg-slate-50 rounded-xl p-4"><dt class="text-xs text-slate-400 uppercase">Marque</dt><dd class="font-semibold mt-1">${esc(brand)}</dd></div>` : ""}
-          ${code ? `<div class="bg-slate-50 rounded-xl p-4"><dt class="text-xs text-slate-400 uppercase">Code / EAN</dt><dd class="font-semibold mt-1">${esc(code)}</dd></div>` : ""}
+         ${code ? `<div class="bg-slate-50 rounded-xl p-4"><dt class="text-xs text-slate-400 uppercase">Code / EAN</dt><dd class="font-semibold mt-1">${esc(code)}</dd></div>` : ""}
           <div class="bg-slate-50 rounded-xl p-4"><dt class="text-xs text-slate-400 uppercase">Gamme</dt><dd class="font-semibold mt-1">${esc(folder[folder.length-1] || "")}</dd></div>
           <div class="bg-slate-50 rounded-xl p-4"><dt class="text-xs text-slate-400 uppercase">Document</dt><dd class="font-semibold mt-1">${ext(name).toUpperCase()}</dd></div>
         </dl>
