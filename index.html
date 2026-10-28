@@ -19,7 +19,6 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   .fade { animation: fade .35s ease both; }
   @keyframes fade { from { opacity:0; transform:translateY(8px);} to {opacity:1; transform:none;} }
-  .photo-thumb.active { outline: 3px solid #0057b8; outline-offset: 2px; }
 </style>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-900">
@@ -60,15 +59,6 @@
   <div id="product" class="hidden"></div>
   <div id="empty" class="hidden text-center py-20 text-slate-500">Aucun document trouvé.</div>
 </main>
-
-<!-- VISIONNEUSE PHOTOS -->
-<div id="photo-lightbox" class="hidden fixed inset-0 z-50 bg-black/90 flex items-center justify-center">
-  <button id="lightbox-close" class="absolute top-4 right-6 text-white text-4xl" aria-label="Fermer">×</button>
-  <button id="lightbox-prev" class="absolute left-3 md:left-8 text-white text-5xl px-3" aria-label="Photo précédente">‹</button>
-  <img id="lightbox-image" class="max-h-[88vh] max-w-[88vw] object-contain bg-white rounded-xl" alt="Photo produit">
-  <button id="lightbox-next" class="absolute right-3 md:right-8 text-white text-5xl px-3" aria-label="Photo suivante">›</button>
-  <span id="lightbox-count" class="absolute bottom-5 text-white/80 text-sm"></span>
-</div>
 
 <footer class="bg-[#001a3d] text-blue-200/70 text-sm">
   <div class="max-w-7xl mx-auto px-5 sm:px-8 py-6 flex justify-between">
@@ -141,25 +131,37 @@ function photoFor(fileName) {
   return (photoCache[fileName] = k ? photos[k] : null);
 }
 
-/* ====== GALERIE PHOTOS ======
-   Formats reconnus : 12NC.jpg (photo 1), 12NC_2.jpg, 12NC_3.jpg... */
-function photosFor(fileName) {
+
+/* ====== GALERIE MULTI-PHOTOS ======
+   Fichiers attendus dans Images Beko Pro :
+   12NC.jpg, 12NC_2.jpg, 12NC_3.jpg, ...
+*/
+function galleryFor(fileName) {
   const { code } = parseName(fileName);
-  const c = norm(code || "");
+  const c = (code || "").replace(/\D/g, "");
+  if (c.length !== 12) {
+    const main = photoFor(fileName);
+    return main ? [main] : [];
+  }
+
+  const found = [];
+  Object.entries(photos).forEach(([key, value]) => {
+    // norm("859991718500_2.jpg") => "8599917185002"
+    if (key === c) found.push({ n: 1, url: value });
+    else if (key.startsWith(c)) {
+      const suffix = key.slice(c.length);
+      if (/^\d+$/.test(suffix)) {
+        const n = Number(suffix);
+        if (n >= 2) found.push({ n, url: value });
+      }
+    }
+  });
+
+  // Si la photo principale a été trouvée via l'ancien mécanisme, on la garde aussi.
   const main = photoFor(fileName);
-  if (c.length < 8) return main ? [main] : [];
+  if (main && !found.some(p => p.url === main)) found.push({ n: 1, url: main });
 
-  const extras = Object.entries(photos)
-    .map(([key, value]) => {
-      const match = key.match(new RegExp("^" + c + "([0-9]+)$"));
-      return match ? { number: Number(match[1]), url: value } : null;
-    })
-    .filter(Boolean)
-    .filter(p => p.number >= 2)
-    .sort((a, b) => a.number - b.number)
-    .map(p => p.url);
-
-  return [...new Set([...(main ? [main] : []), ...extras])];
+  return [...new Map(found.sort((a,b) => a.n-b.n).map(p => [p.url, p.url])).values()];
 }
 
 /* ====== DIAGNOSTIC : ajouter #diagnostic à la fin de l'adresse ====== */
@@ -244,7 +246,7 @@ function folderCard(item, i) {
 }
 
 function productCard(item, i, showPath) {
-  const name = base(item.path), gallery = photosFor(name), img = gallery[0] || null, { model, brand, code } = parseName(name);
+  const name = base(item.path), gallery = galleryFor(name), img = gallery[0] || photoFor(name), { model, brand, code } = parseName(name);
   const parent = item.path.split("/").slice(0, -1).join(" › ");
   return `
   <a href="#produit=${encodeURIComponent(item.path)}" class="card fade bg-white rounded-3xl overflow-hidden border border-slate-200 group flex flex-col" style="animation-delay:${i*40}ms">
@@ -278,12 +280,14 @@ function renderGrid(items, showPath = false) {
 function renderProduct(path) {
   const item = tree.find(i => i.path === path);
   if (!item) { location.hash = ""; return; }
-  const name = base(path), gallery = photosFor(name), img = gallery[0] || null, { model, brand, code } = parseName(name);
+  const name = base(path), gallery = galleryFor(name), img = gallery[0] || photoFor(name), { model, brand, code } = parseName(name);
+  activeGallery = gallery;
   const folder = path.split("/").slice(0, -1);
   const pdf = url(path);
   const isPdf = ext(name) === "pdf";
+
   breadcrumb(folder.join("/"), model);
-  $("count").textContent = gallery.length > 1 ? `${gallery.length} photos` : "";
+  $("count").textContent = "";
   $("loading").classList.add("hidden");
   $("grid").classList.add("hidden");
   $("empty").classList.add("hidden");
@@ -291,15 +295,11 @@ function renderProduct(path) {
   $("product").innerHTML = `
   <div class="fade bg-white rounded-3xl border border-slate-200 overflow-hidden">
     <div class="grid lg:grid-cols-2">
-      <div class="bg-gradient-to-br from-slate-50 to-blue-50 p-8 min-h-[360px]">
-        <div id="main-photo-zone" class="flex items-center justify-center min-h-[320px] ${img ? "cursor-zoom-in" : ""}">
-          ${img ? `<img id="main-product-photo" src="${img}" class="max-h-[420px] object-contain mix-blend-multiply" alt="${esc(model)}">`
-                : `<div class="text-center text-slate-400"><div class="text-6xl mb-3">📷</div>Photo non disponible</div>`}
-        </div>
-        ${gallery.length > 1 ? `<div class="mt-6 flex flex-wrap gap-3 justify-center">
-          ${gallery.map((photo, index) => `<button class="photo-thumb ${index === 0 ? "active" : ""} w-20 h-20 rounded-xl border border-slate-200 bg-white p-1.5 overflow-hidden" data-photo-index="${index}" aria-label="Afficher la photo ${index + 1}"><img src="${photo}" loading="lazy" class="w-full h-full object-contain" alt=""></button>`).join("")}
-        </div>` : ""}
+      <div class="bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center p-10 min-h-[360px]">
+        ${img ? `<img id="product-main-image" src="${img}" class="max-h-[420px] object-contain mix-blend-multiply" alt="${esc(model)}">`
+              : `<div class="text-center text-slate-400"><div class="text-6xl mb-3">📷</div>Photo non disponible</div>`}
       </div>
+      ${gallery.length > 1 ? `<div class="px-8 pb-8 flex flex-wrap gap-3 justify-center">${gallery.map((photo, index) => `<button type="button" onclick="selectGalleryPhoto(${index})" class="gallery-thumb ${index === 0 ? "ring-2 ring-[#0057b8]" : ""} w-20 h-20 rounded-xl border border-slate-200 bg-white p-1.5"><img src="${photo}" class="w-full h-full object-contain" alt="Photo ${index + 1}"></button>`).join("")}</div>` : ""}
       <div class="p-8 md:p-10 flex flex-col">
         <p class="text-xs font-bold uppercase tracking-[.2em] text-sky-600">${esc(folder.join(" › "))}</p>
         <h2 class="mt-3 text-3xl md:text-4xl font-extrabold text-slate-900 break-words">${esc(model)}</h2>
@@ -312,7 +312,7 @@ function renderProduct(path) {
         <div class="mt-8 flex flex-col sm:flex-row gap-3">
           <a href="${pdf}" target="_blank" rel="noopener" class="flex-1 text-center rounded-xl bg-[#0057b8] hover:bg-[#00306e] text-white font-semibold py-3 transition">Ouvrir la fiche ↗</a>
           <a href="${pdf}" download class="flex-1 text-center rounded-xl border border-slate-300 hover:bg-slate-50 font-semibold py-3 transition">Télécharger</a>
-          ${img ? `<a id="photo-hd-link" href="${img}" download class="flex-1 text-center rounded-xl border border-slate-300 hover:bg-slate-50 font-semibold py-3 transition">Photo HD</a>` : ""}
+          ${img ? `<a href="${img}" download class="flex-1 text-center rounded-xl border border-slate-300 hover:bg-slate-50 font-semibold py-3 transition">Photo HD</a>` : ""}
         </div>
         <a href="#${encodeURIComponent(folder.join("/"))}" class="mt-6 text-sm font-semibold text-[#0057b8] hover:underline">← Retour à ${esc(folder[folder.length-1] || "l'accueil")}</a>
       </div>
@@ -321,59 +321,19 @@ function renderProduct(path) {
       <iframe src="${pdf}#view=FitH" class="w-full h-[80vh] rounded-xl border border-slate-200 bg-white" title="Fiche ${esc(model)}"></iframe>
     </div>` : ""}
   </div>`;
-
-  currentGallery = gallery;
-  currentPhotoIndex = 0;
-  document.querySelectorAll(".photo-thumb").forEach(button => {
-    button.addEventListener("click", () => selectProductPhoto(Number(button.dataset.photoIndex)));
-  });
-  const mainZone = $("main-photo-zone");
-  if (mainZone && gallery.length) mainZone.addEventListener("click", () => openLightbox(currentPhotoIndex));
 }
 
-let currentGallery = [];
-let currentPhotoIndex = 0;
 
-function selectProductPhoto(index) {
-  currentPhotoIndex = index;
-  const image = $("main-product-photo");
-  if (image) image.src = currentGallery[index];
-  const hd = $("photo-hd-link");
-  if (hd) hd.href = currentGallery[index];
-  document.querySelectorAll(".photo-thumb").forEach(button => {
-    button.classList.toggle("active", Number(button.dataset.photoIndex) === index);
+let activeGallery = [];
+function selectGalleryPhoto(index) {
+  const img = $("product-main-image");
+  if (!img || !activeGallery[index]) return;
+  img.src = activeGallery[index];
+  document.querySelectorAll(".gallery-thumb").forEach((b, i) => {
+    b.classList.toggle("ring-2", i === index);
+    b.classList.toggle("ring-[#0057b8]", i === index);
   });
 }
-
-function openLightbox(index) {
-  currentPhotoIndex = index;
-  updateLightbox();
-  $("photo-lightbox").classList.remove("hidden");
-}
-
-function updateLightbox() {
-  if (!currentGallery.length) return;
-  $("lightbox-image").src = currentGallery[currentPhotoIndex];
-  $("lightbox-count").textContent = currentGallery.length > 1 ? `${currentPhotoIndex + 1} / ${currentGallery.length}` : "";
-  $("lightbox-prev").style.display = $("lightbox-next").style.display = currentGallery.length > 1 ? "" : "none";
-}
-
-function moveLightbox(direction) {
-  currentPhotoIndex = (currentPhotoIndex + direction + currentGallery.length) % currentGallery.length;
-  updateLightbox();
-  selectProductPhoto(currentPhotoIndex);
-}
-
-$("lightbox-close").addEventListener("click", () => $("photo-lightbox").classList.add("hidden"));
-$("lightbox-prev").addEventListener("click", event => { event.stopPropagation(); moveLightbox(-1); });
-$("lightbox-next").addEventListener("click", event => { event.stopPropagation(); moveLightbox(1); });
-$("photo-lightbox").addEventListener("click", event => { if (event.target.id === "photo-lightbox") $("photo-lightbox").classList.add("hidden"); });
-document.addEventListener("keydown", event => {
-  if ($("photo-lightbox").classList.contains("hidden")) return;
-  if (event.key === "Escape") $("photo-lightbox").classList.add("hidden");
-  if (event.key === "ArrowLeft") moveLightbox(-1);
-  if (event.key === "ArrowRight") moveLightbox(1);
-});
 
 /* ====== FIL D'ARIANE ====== */
 function breadcrumb(path, last) {
@@ -392,7 +352,6 @@ function breadcrumb(path, last) {
 
 /* ====== ROUTAGE ====== */
 function route() {
-  $("photo-lightbox").classList.add("hidden");
   const h = decodeURIComponent(location.hash.slice(1));
   $("search").value = "";
   if (h === "diagnostic") return renderDiagnostic();
