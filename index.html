@@ -95,15 +95,37 @@ const isDoc = i => i.type === "blob" && !inImages(i.path) && !IMG_EXT.includes(e
    ex : "Fiche produit_LL_Beko Pro_ALA021BP_853202101000.pdf"
    -> marque "Beko Pro", modèle "ALA021BP", code "853202101000" */
 function parseName(fileName) {
-  const parts = clean(fileName).split("_").map(s => s.trim()).filter(Boolean);
-  const idx = parts.findIndex(s => /^\d{8,}$/.test(s));
-  const code = idx >= 0 ? parts[idx] : (clean(fileName).match(/\d{8,}/) || [""])[0];
-  let model = clean(fileName), brand = "";
-  if (idx > 0) {
-    model = parts[idx - 1];
-    brand = idx > 1 ? parts[idx - 2] : "";
-    if (/^fiche/i.test(brand) || brand.length <= 3) brand = "";
+  const original = clean(fileName);
+  const parts = original.split("_").map(s => s.trim()).filter(Boolean);
+
+  // 12NC : on privilégie un vrai code à 12 chiffres.
+  const codeMatch = original.match(/(?<!\d)\d{12}(?!\d)/);
+  const code = codeMatch ? codeMatch[0] : (original.match(/\d{8,}/) || [""])[0];
+
+  // Nettoyage des morceaux purement documentaires / marque.
+  const noise = /^(fiche\s*produit|fiche|produit|beko\s*pro|beko|info\s*produit|st\s*denis|fr|en|fp|v\d+|new\s*ean(?:\s*\(\d+\))?)$/i;
+  let candidates = parts
+    .filter(p => p !== code)
+    .filter(p => !noise.test(p))
+    .filter(p => !/^\d{8,}$/.test(p));
+
+  // Cas standard : le dernier bloc utile contient le modèle.
+  // Si ce bloc est seulement "BP", on le rattache au bloc précédent.
+  let model = candidates.length ? candidates[candidates.length - 1] : original;
+  if (/^BP$/i.test(model) && candidates.length >= 2) {
+    model = candidates[candidates.length - 2] + " BP";
   }
+
+  // Certains anciens noms commencent par "FICHE PRODUIT ..." dans un seul bloc.
+  model = model
+    .replace(/^FICHE\s*PRODUIT\s*/i, "")
+    .replace(/^BEKO\s*PRO\s*/i, "")
+    .trim();
+
+  // La marque n'est plus utilisée à l'affichage, mais on conserve la propriété
+  // pour rester compatible avec le reste du fichier.
+  const brand = "";
+
   return { model, brand, code };
 }
 
@@ -129,39 +151,6 @@ function photoFor(fileName) {
       || keys.find(p => p.length >= 5 && /\d/.test(p) && m.startsWith(p));
   }
   return (photoCache[fileName] = k ? photos[k] : null);
-}
-
-
-/* ====== GALERIE MULTI-PHOTOS ======
-   Fichiers attendus dans Images Beko Pro :
-   12NC.jpg, 12NC_2.jpg, 12NC_3.jpg, ...
-*/
-function galleryFor(fileName) {
-  const { code } = parseName(fileName);
-  const c = (code || "").replace(/\D/g, "");
-  if (c.length !== 12) {
-    const main = photoFor(fileName);
-    return main ? [main] : [];
-  }
-
-  const found = [];
-  Object.entries(photos).forEach(([key, value]) => {
-    // norm("859991718500_2.jpg") => "8599917185002"
-    if (key === c) found.push({ n: 1, url: value });
-    else if (key.startsWith(c)) {
-      const suffix = key.slice(c.length);
-      if (/^\d+$/.test(suffix)) {
-        const n = Number(suffix);
-        if (n >= 2) found.push({ n, url: value });
-      }
-    }
-  });
-
-  // Si la photo principale a été trouvée via l'ancien mécanisme, on la garde aussi.
-  const main = photoFor(fileName);
-  if (main && !found.some(p => p.url === main)) found.push({ n: 1, url: main });
-
-  return [...new Map(found.sort((a,b) => a.n-b.n).map(p => [p.url, p.url])).values()];
 }
 
 /* ====== DIAGNOSTIC : ajouter #diagnostic à la fin de l'adresse ====== */
@@ -246,14 +235,14 @@ function folderCard(item, i) {
 }
 
 function productCard(item, i, showPath) {
-  const name = base(item.path), gallery = galleryFor(name), img = gallery[0] || photoFor(name), { model, brand, code } = parseName(name);
+  const name = base(item.path), img = photoFor(name), { model, brand, code } = parseName(name);
   const parent = item.path.split("/").slice(0, -1).join(" › ");
   return `
   <a href="#produit=${encodeURIComponent(item.path)}" class="card fade bg-white rounded-3xl overflow-hidden border border-slate-200 group flex flex-col" style="animation-delay:${i*40}ms">
     <div class="h-60 bg-white flex items-center justify-center overflow-hidden p-6 relative">
       ${img ? `<img src="${img}" loading="lazy" class="zoom max-h-full object-contain" alt="${esc(model)}">`
             : `<div class="w-20 h-24 rounded-xl bg-red-50 text-red-500 flex items-center justify-center font-extrabold">PDF</div>`}
-           ${gallery.length > 1 ? `<span class="absolute top-3 right-3 bg-white/95 text-[#00306e] text-[11px] font-bold px-2.5 py-1 rounded-full shadow">📷 ${gallery.length}</span>` : ""}
+      ${brand ? `<span class="absolute top-3 left-3 bg-[#001a3d] text-white text-[10px] font-bold px-2.5 py-1 rounded-full uppercase">${esc(brand)}</span>` : ""}
     </div>
     <div class="p-5 border-t border-slate-100 flex flex-col flex-1">
       <p class="text-[11px] ${showPath ? "text-slate-400" : "font-bold uppercase tracking-widest text-sky-600"}">${showPath ? esc(parent) : "Fiche produit"}</p>
@@ -279,8 +268,7 @@ function renderGrid(items, showPath = false) {
 function renderProduct(path) {
   const item = tree.find(i => i.path === path);
   if (!item) { location.hash = ""; return; }
-  const name = base(path), gallery = galleryFor(name), img = gallery[0] || photoFor(name), { model, brand, code } = parseName(name);
-  activeGallery = gallery;
+  const name = base(path), img = photoFor(name), { model, brand, code } = parseName(name);
   const folder = path.split("/").slice(0, -1);
   const pdf = url(path);
   const isPdf = ext(name) === "pdf";
@@ -295,15 +283,15 @@ function renderProduct(path) {
   <div class="fade bg-white rounded-3xl border border-slate-200 overflow-hidden">
     <div class="grid lg:grid-cols-2">
       <div class="bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center p-10 min-h-[360px]">
-        ${img ? `<img id="product-main-image" src="${img}" class="max-h-[420px] object-contain mix-blend-multiply" alt="${esc(model)}">`
+        ${img ? `<img src="${img}" class="max-h-[420px] object-contain mix-blend-multiply" alt="${esc(model)}">`
               : `<div class="text-center text-slate-400"><div class="text-6xl mb-3">📷</div>Photo non disponible</div>`}
       </div>
-      ${gallery.length > 1 ? `<div class="px-8 pb-8 flex flex-wrap gap-3 justify-center">${gallery.map((photo, index) => `<button type="button" onclick="selectGalleryPhoto(${index})" class="gallery-thumb ${index === 0 ? "ring-2 ring-[#0057b8]" : ""} w-20 h-20 rounded-xl border border-slate-200 bg-white p-1.5"><img src="${photo}" class="w-full h-full object-contain" alt="Photo ${index + 1}"></button>`).join("")}</div>` : ""}
       <div class="p-8 md:p-10 flex flex-col">
         <p class="text-xs font-bold uppercase tracking-[.2em] text-sky-600">${esc(folder.join(" › "))}</p>
         <h2 class="mt-3 text-3xl md:text-4xl font-extrabold text-slate-900 break-words">${esc(model)}</h2>
         <dl class="mt-6 grid grid-cols-2 gap-4">
-         ${code ? `<div class="bg-slate-50 rounded-xl p-4"><dt class="text-xs text-slate-400 uppercase">Code / EAN</dt><dd class="font-semibold mt-1">${esc(code)}</dd></div>` : ""}
+          ${brand ? `<div class="bg-slate-50 rounded-xl p-4"><dt class="text-xs text-slate-400 uppercase">Marque</dt><dd class="font-semibold mt-1">${esc(brand)}</dd></div>` : ""}
+          ${code ? `<div class="bg-slate-50 rounded-xl p-4"><dt class="text-xs text-slate-400 uppercase">Code / EAN</dt><dd class="font-semibold mt-1">${esc(code)}</dd></div>` : ""}
           <div class="bg-slate-50 rounded-xl p-4"><dt class="text-xs text-slate-400 uppercase">Gamme</dt><dd class="font-semibold mt-1">${esc(folder[folder.length-1] || "")}</dd></div>
           <div class="bg-slate-50 rounded-xl p-4"><dt class="text-xs text-slate-400 uppercase">Document</dt><dd class="font-semibold mt-1">${ext(name).toUpperCase()}</dd></div>
         </dl>
@@ -319,18 +307,6 @@ function renderProduct(path) {
       <iframe src="${pdf}#view=FitH" class="w-full h-[80vh] rounded-xl border border-slate-200 bg-white" title="Fiche ${esc(model)}"></iframe>
     </div>` : ""}
   </div>`;
-}
-
-
-let activeGallery = [];
-function selectGalleryPhoto(index) {
-  const img = $("product-main-image");
-  if (!img || !activeGallery[index]) return;
-  img.src = activeGallery[index];
-  document.querySelectorAll(".gallery-thumb").forEach((b, i) => {
-    b.classList.toggle("ring-2", i === index);
-    b.classList.toggle("ring-[#0057b8]", i === index);
-  });
 }
 
 /* ====== FIL D'ARIANE ====== */
