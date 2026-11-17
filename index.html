@@ -324,18 +324,24 @@ function selectProductPhoto(index) {
    Aucun EAN n'est déduit du 12NC : il est extrait du texte du PDF. */
 const eanCache = new Map();
 let activeEANPath = "";
+function validEAN13(code) {
+  if (!/^8690\d{9}$/.test(code)) return false;
+  const digits = [...code].map(Number);
+  const sum = digits.slice(0, 12).reduce((total, digit, i) => total + digit * (i % 2 === 0 ? 1 : 3), 0);
+  return (10 - sum % 10) % 10 === digits[12];
+}
 function extractEAN(text) {
-  const normalized = text.normalize("NFKC").replace(/\u00a0/g, " ");
-  // Code EAN suivi de 13 chiffres, même si le PDF insère des espaces.
-  const patterns = [
-    /(?:CODE\s*EAN(?:\s*[-:]\s*13)?|EAN\s*[-:]?\s*13|EAN)\s*[:：-]?\s*((?:\d[\s.\-]*){13})/gi,
-    /(?:CODE\s*BARRES?|GTIN(?:\s*[-:]\s*13)?)\s*[:：-]?\s*((?:\d[\s.\-]*){13})/gi
-  ];
-  for (const pattern of patterns) {
-    for (const match of normalized.matchAll(pattern)) {
-      const digits = match[1].replace(/\D/g, "");
-      if (digits.length === 13) return digits;
-    }
+  // Le gras n'empêche pas la lecture, mais peut couper le texte en fragments.
+  // Recherche indépendante du libellé, puisque les EAN Beko concernés commencent par 8690.
+  const normalized = text.normalize("NFKC").replace(/[\u00a0\u202f]/g, " ");
+  // Première passe : 13 chiffres consécutifs.
+  for (const match of normalized.matchAll(/(?<!\d)8690\d{9}(?!\d)/g)) {
+    if (validEAN13(match[0])) return match[0];
+  }
+  // Deuxième passe : 13 chiffres répartis entre des fragments / espaces / ponctuation.
+  for (const match of normalized.matchAll(/(?<!\d)8[\s.\-]*6[\s.\-]*9[\s.\-]*0(?:[\s.\-]*\d){9}(?![\s.\-]*\d)/g)) {
+    const code = match[0].replace(/\D/g, "");
+    if (validEAN13(code)) return code;
   }
   return null;
 }
@@ -343,16 +349,18 @@ async function readEANFromPDF(path) {
   if (eanCache.has(path)) return eanCache.get(path);
   if (!window.pdfjsLib) throw new Error("PDF.js indisponible");
   pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-  const task = pdfjsLib.getDocument({ url: url(path) });
-  const pdf = await task.promise;
+  const pdf = await pdfjsLib.getDocument({ url: url(path) }).promise;
   try {
-    for (let pageNo = 1; pageNo <= Math.min(pdf.numPages, 4); pageNo++) {
+    for (let pageNo = 1; pageNo <= pdf.numPages; pageNo++) {
       const page = await pdf.getPage(pageNo);
       const content = await page.getTextContent();
       const fragments = content.items.map(item => item.str || "");
-      // Deux variantes : PDF avec ou sans espaces entre fragments.
-      const ean = extractEAN(fragments.join(" ")) || extractEAN(fragments.join(""));
-      if (ean) { eanCache.set(path, ean); return ean; }
+      // Cherche dans chaque fragment, puis dans les regroupements successifs.
+      const candidates = [...fragments, fragments.join(" "), fragments.join("")];
+      for (const text of candidates) {
+        const ean = extractEAN(text);
+        if (ean) { eanCache.set(path, ean); return ean; }
+      }
     }
     eanCache.set(path, null);
     return null;
