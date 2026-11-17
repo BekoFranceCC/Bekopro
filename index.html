@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Beko Professional – Fiches Produits</title>
 <script src="https://cdn.tailwindcss.com"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
   body { font-family: 'Inter', sans-serif; }
@@ -37,7 +38,7 @@
     </div>
     <div class="mt-8 max-w-2xl relative">
       <svg class="w-5 h-5 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-width="2" d="m21 21-4.35-4.35m2.1-5.4a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0z"/></svg>
-      <input id="search" type="text" placeholder="Rechercher une référence, un modèle ou un code EAN..."
+      <input id="search" type="text" placeholder="Rechercher une référence, un modèle ou un code produit (12NC)..."
         class="w-full pl-12 pr-5 py-4 rounded-2xl bg-white text-slate-900 placeholder-slate-400 shadow-2xl outline-none focus:ring-4 focus:ring-sky-400/40">
     </div>
   </div>
@@ -282,9 +283,9 @@ function renderProduct(path) {
         <h2 class="mt-3 text-3xl md:text-4xl font-extrabold text-slate-900 break-words">${esc(model)}</h2>
         <dl class="mt-6 grid grid-cols-2 gap-4">
           ${brand ? `<div class="bg-slate-50 rounded-xl p-4"><dt class="text-xs text-slate-400 uppercase">Marque</dt><dd class="font-semibold mt-1">${esc(brand)}</dd></div>` : ""}
-          ${code ? `<div class="bg-slate-50 rounded-xl p-4"><dt class="text-xs text-slate-400 uppercase">Code / EAN</dt><dd class="font-semibold mt-1">${esc(code)}</dd></div>` : ""}
+          ${code ? `<div class="bg-slate-50 rounded-xl p-4"><dt class="text-xs text-slate-400 uppercase">Code produit (12NC)</dt><dd class="font-semibold mt-1">${esc(code)}</dd></div>` : ""}
           <div class="bg-slate-50 rounded-xl p-4"><dt class="text-xs text-slate-400 uppercase">Gamme</dt><dd class="font-semibold mt-1">${esc(folder[folder.length-1] || "")}</dd></div>
-          <div class="bg-slate-50 rounded-xl p-4"><dt class="text-xs text-slate-400 uppercase">Document</dt><dd class="font-semibold mt-1">${ext(name).toUpperCase()}</dd></div>
+          <div class="bg-slate-50 rounded-xl p-4"><dt class="text-xs text-slate-400 uppercase">Code EAN</dt><dd id="product-ean" class="font-semibold mt-1">Lecture du PDF…</dd></div>
         </dl>
         <div class="mt-8 flex flex-col sm:flex-row gap-3">
           <a href="${pdf}" target="_blank" rel="noopener" class="flex-1 text-center rounded-xl bg-[#0057b8] hover:bg-[#00306e] text-white font-semibold py-3 transition">Ouvrir la fiche ↗</a>
@@ -301,6 +302,7 @@ function renderProduct(path) {
   document.querySelectorAll(".gallery-thumb").forEach(button => {
     button.addEventListener("click", () => selectProductPhoto(Number(button.dataset.galleryIndex)));
   });
+  showProductEAN(path);
 }
 
 let activeProductGallery = [];
@@ -315,6 +317,65 @@ function selectProductPhoto(index) {
     button.classList.toggle("border-blue-600", Number(button.dataset.galleryIndex) === index);
     button.classList.toggle("border-slate-200", Number(button.dataset.galleryIndex) !== index);
   });
+}
+
+/* ====== LECTURE EAN DEPUIS LE PDF ======
+   Lecture à la demande uniquement sur la page du produit.
+   Aucun EAN n'est déduit du 12NC : il est extrait du texte du PDF. */
+const eanCache = new Map();
+let activeEANPath = "";
+function extractEAN(text) {
+  const normalized = text.normalize("NFKC").replace(/\u00a0/g, " ");
+  // Code EAN suivi de 13 chiffres, même si le PDF insère des espaces.
+  const patterns = [
+    /(?:CODE\s*EAN(?:\s*[-:]\s*13)?|EAN\s*[-:]?\s*13|EAN)\s*[:：-]?\s*((?:\d[\s.\-]*){13})/gi,
+    /(?:CODE\s*BARRES?|GTIN(?:\s*[-:]\s*13)?)\s*[:：-]?\s*((?:\d[\s.\-]*){13})/gi
+  ];
+  for (const pattern of patterns) {
+    for (const match of normalized.matchAll(pattern)) {
+      const digits = match[1].replace(/\D/g, "");
+      if (digits.length === 13) return digits;
+    }
+  }
+  return null;
+}
+async function readEANFromPDF(path) {
+  if (eanCache.has(path)) return eanCache.get(path);
+  if (!window.pdfjsLib) throw new Error("PDF.js indisponible");
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  const task = pdfjsLib.getDocument({ url: url(path) });
+  const pdf = await task.promise;
+  try {
+    for (let pageNo = 1; pageNo <= Math.min(pdf.numPages, 4); pageNo++) {
+      const page = await pdf.getPage(pageNo);
+      const content = await page.getTextContent();
+      const fragments = content.items.map(item => item.str || "");
+      // Deux variantes : PDF avec ou sans espaces entre fragments.
+      const ean = extractEAN(fragments.join(" ")) || extractEAN(fragments.join(""));
+      if (ean) { eanCache.set(path, ean); return ean; }
+    }
+    eanCache.set(path, null);
+    return null;
+  } finally {
+    await pdf.destroy();
+  }
+}
+async function showProductEAN(path) {
+  activeEANPath = path;
+  const target = $("product-ean");
+  if (!target) return;
+  if (ext(path) !== "pdf") { target.textContent = "Non disponible"; return; }
+  try {
+    const ean = await readEANFromPDF(path);
+    if (activeEANPath === path && $("product-ean")) {
+      $("product-ean").textContent = ean || "Non trouvé dans le PDF";
+    }
+  } catch (error) {
+    console.warn("Lecture du code EAN impossible :", error);
+    if (activeEANPath === path && $("product-ean")) {
+      $("product-ean").textContent = "Lecture indisponible";
+    }
+  }
 }
 
 /* ====== FIL D'ARIANE ====== */
