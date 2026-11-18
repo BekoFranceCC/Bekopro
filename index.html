@@ -286,6 +286,7 @@ function renderProduct(path) {
           ${code ? `<div class="bg-slate-50 rounded-xl p-4"><dt class="text-xs text-slate-400 uppercase">Code produit (12NC)</dt><dd class="font-semibold mt-1">${esc(code)}</dd></div>` : ""}
           <div class="bg-slate-50 rounded-xl p-4"><dt class="text-xs text-slate-400 uppercase">Gamme</dt><dd class="font-semibold mt-1">${esc(folder[folder.length-1] || "")}</dd></div>
           <div class="bg-slate-50 rounded-xl p-4"><dt class="text-xs text-slate-400 uppercase">Code EAN</dt><dd id="product-ean" class="font-semibold mt-1">Lecture du PDF…</dd></div>
+          <div class="bg-slate-50 rounded-xl p-4"><dt class="text-xs text-slate-400 uppercase">Description produit</dt><dd id="product-description" class="font-semibold mt-1 text-sm leading-snug">Lecture du PDF…</dd></div>
         </dl>
         <div class="mt-8 flex flex-col sm:flex-row gap-3">
           <a href="${pdf}" target="_blank" rel="noopener" class="flex-1 text-center rounded-xl bg-[#0057b8] hover:bg-[#00306e] text-white font-semibold py-3 transition">Ouvrir la fiche ↗</a>
@@ -303,6 +304,7 @@ function renderProduct(path) {
     button.addEventListener("click", () => selectProductPhoto(Number(button.dataset.galleryIndex)));
   });
   showProductEAN(path);
+  showProductDescription(path);
 }
 
 let activeProductGallery = [];
@@ -383,6 +385,75 @@ async function showProductEAN(path) {
     if (activeEANPath === path && $("product-ean")) {
       $("product-ean").textContent = "Lecture indisponible";
     }
+  }
+}
+
+/* ====== DESCRIPTION COURTE EXTRAITE DE LA FICHE PDF ======
+   On privilégie les lignes de titre situées en haut de la première page.
+   Pas de description inventée lorsque le texte est illisible. */
+const descriptionCache = new Map();
+function extractProductDescription(items) {
+  const rows = new Map();
+  for (const item of items) {
+    const t = (item.str || "").trim();
+    if (!t) continue;
+    const y = Math.round((item.transform?.[5] || 0) / 4) * 4;
+    const row = rows.get(y) || [];
+    row.push({ x: item.transform?.[4] || 0, text: t });
+    rows.set(y, row);
+  }
+  const lines = [...rows.entries()].sort((a,b) => b[0]-a[0]).flatMap(([,r]) => {
+    const sorted = r.sort((a,b) => a.x-b.x);
+    // Évite de fusionner un titre à gauche avec une mention de gamme à droite.
+    const groups = []; let group = [], lastX = null;
+    for (const item of sorted) {
+      if (lastX !== null && item.x - lastX > 150) { groups.push(group); group = []; }
+      group.push(item.text); lastX = item.x;
+    }
+    if (group.length) groups.push(group);
+    return groups.map(g => g.join(" ").replace(/\s+/g," ").trim());
+  });
+  const type = /\b(?:lave[ -]?linge|s[eè]che[ -]?linge|lave[ -]?vaisselle|r[eé]frig[eé]rateur|cong[eé]lateur|four|micro[ -]?ondes|machine\s+[àa]\s+gla[cç]ons|repasseuse|armoire\s+r[eé]frig[eé]r[eé]e|cave\s+[àa]\s+vins)\b/i;
+  const isNoise = /(?:code\s*(?:ean|12nc|commercial)|caract[eé]ristiques|donn[eé]es\s+techniques|www\.|@|t[eé]l[eé]phone)/i;
+  // Le titre peut être réparti sur deux lignes : « Lave-linge à usage intensif » puis « Silver - 10 kg ».
+  for (let i=0; i<Math.min(lines.length,25); i++) {
+    let candidate = lines[i];
+    if (!type.test(candidate) || isNoise.test(candidate)) continue;
+    if (i+1<lines.length && /\b(?:usage\s+intensif|professionnel|silver|blanc|inox)\b/i.test(candidate)
+        && /(?:\b\d+(?:[,.]\d+)?\s*kg\b|\bSilver\b|\bBlanc\b)/i.test(lines[i+1])) {
+      candidate += " " + lines[i+1];
+    }
+    candidate = candidate.replace(/\s+/g," ").trim();
+    // Ne pas reprendre tout un paragraphe ni des caractéristiques sans rapport.
+    if (candidate.length >= 12 && candidate.length <= 110) return candidate;
+  }
+  return null;
+}
+async function readProductDescription(path) {
+  if (descriptionCache.has(path)) return descriptionCache.get(path);
+  if (!window.pdfjsLib) throw new Error("PDF.js indisponible");
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  const pdf = await pdfjsLib.getDocument({ url: url(path) }).promise;
+  try {
+    const page = await pdf.getPage(1);
+    const content = await page.getTextContent();
+    const description = extractProductDescription(content.items);
+    descriptionCache.set(path, description);
+    return description;
+  } finally { await pdf.destroy(); }
+}
+async function showProductDescription(path) {
+  const target = $("product-description");
+  if (!target) return;
+  if (ext(path) !== "pdf") { target.textContent = "Non disponible"; return; }
+  try {
+    const value = await readProductDescription(path);
+    if (activeEANPath === path && $("product-description")) {
+      $("product-description").textContent = value || "Description non détectée";
+    }
+  } catch (error) {
+    console.warn("Lecture de la description impossible :",error);
+    if (activeEANPath === path && $("product-description")) $("product-description").textContent = "Lecture indisponible";
   }
 }
 
