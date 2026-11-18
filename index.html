@@ -377,6 +377,8 @@ async function showProductEAN(path) {
   if (ext(path) !== "pdf") { target.textContent = "Non disponible"; return; }
   try {
     const ean = await readEANFromPDF(path);
+    const item = tree.find(i => i.path === path);
+    if (item) storeEAN(item, ean);
     if (activeEANPath === path && $("product-ean")) {
       $("product-ean").textContent = ean || "Non trouvé dans le PDF";
     }
@@ -482,13 +484,90 @@ function route() {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-/* Recherche dans toute la gamme (modèle, code EAN, nom de fichier) */
-$("search").addEventListener("input", e => {
-  const q = norm(e.target.value);
-  if (!q) return route();
-  const res = tree.filter(i => isDoc(i) && norm(i.path).includes(q));
-  $("breadcrumb").innerHTML = `<span class="text-slate-900 font-bold">Résultats pour « ${esc(e.target.value)} »</span>`;
-  renderGrid(res, true);
+/* ====== RECHERCHE PAR MODELE, 12NC ET EAN ======
+   La recherche classique reste immédiate.
+   Pour un EAN complet (13 chiffres commençant par 8690), le site lit
+   progressivement les PDF, uniquement si nécessaire, et mémorise leurs EAN.
+   Le cache est lié à la version SHA du fichier pour éviter les données périmées. */
+const eanSearchStoragePrefix = "bekopro-ean-v1:";
+const eanIndex = new Map();
+let eanIndexPromise = null;
+let searchVersion = 0;
+let eanProgress = { done: 0, total: 0, failures: 0 };
+
+function eanCacheKey(item) {
+  return eanSearchStoragePrefix + item.path + ":" + (item.sha || "unknown");
+}
+function eanIndexFor(item) {
+  const key = eanCacheKey(item);
+  if (eanIndex.has(key)) return eanIndex.get(key);
+  try {
+    const cached = localStorage.getItem(eanCacheKey(item));
+    if (cached !== null) {
+      const value = cached || null;
+      eanIndex.set(key, value);
+      eanCache.set(item.path, value);
+      return value;
+    }
+  } catch (_) { /* navigation privée : cache mémoire uniquement */ }
+  return undefined;
+}
+function storeEAN(item, ean) {
+  eanIndex.set(eanCacheKey(item), ean);
+  eanCache.set(item.path, ean);
+  try { localStorage.setItem(eanCacheKey(item), ean || ""); } catch (_) {}
+}
+function renderSearchResults(query, version) {
+  if (version !== searchVersion) return;
+  const normalized = norm(query);
+  const matches = tree.filter(i => isDoc(i) && (
+    norm(i.path).includes(normalized) ||
+    (eanIndexFor(i) || "").includes(normalized)
+  ));
+  $("breadcrumb").innerHTML = `<span class="text-slate-900 font-bold">Résultats pour « ${esc(query)} »</span>`;
+  renderGrid(matches, true);
+  if (/^8690\d{9}$/.test(normalized) && eanIndexPromise) {
+    $("count").textContent = `${matches.length} résultat(s) · Analyse EAN ${eanProgress.done}/${eanProgress.total} PDF`;
+  }
+}
+async function buildEANIndex() {
+  const docs = tree.filter(i => isDoc(i) && ext(i.path) === "pdf");
+  const pending = docs.filter(item => eanIndexFor(item) === undefined);
+  eanProgress = { done: docs.length - pending.length, total: docs.length, failures: 0 };
+  let next = 0;
+  async function worker() {
+    while (next < pending.length) {
+      const item = pending[next++];
+      try {
+        const ean = await readEANFromPDF(item.path);
+        storeEAN(item, ean);
+      } catch (error) {
+        eanProgress.failures++;
+        console.warn("EAN non indexé :", item.path, error);
+        // Échec temporaire : ne pas mémoriser un faux « aucun EAN ».
+      }
+      eanProgress.done++;
+      const input = $("search").value.trim();
+      if (/^8690\d{9}$/.test(norm(input))) renderSearchResults(input, searchVersion);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(3, pending.length) }, worker));
+}
+$("search").addEventListener("input", async e => {
+  const query = e.target.value.trim();
+  const version = ++searchVersion;
+  if (!query) return route();
+  renderSearchResults(query, version);
+  // On ne télécharge pas tous les PDF pour une recherche ordinaire.
+  if (!/^8690\d{9}$/.test(norm(query))) return;
+  if (!eanIndexPromise) {
+    eanIndexPromise = buildEANIndex().finally(() => { eanIndexPromise = null; });
+  }
+  await eanIndexPromise;
+  renderSearchResults(query, version);
+  if (version === searchVersion && eanProgress.failures) {
+    $("count").textContent += ` · ${eanProgress.failures} PDF non lisible(s)`;
+  }
 });
 
 /* ====== DÉMARRAGE ====== */
