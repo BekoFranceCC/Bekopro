@@ -378,7 +378,7 @@ async function showProductEAN(path) {
   try {
     const ean = await readEANFromPDF(path);
     const item = tree.find(i => i.path === path);
-    if (item) storeEAN(item, ean);
+    if (item) saveIndexedEAN(item, ean);
     if (activeEANPath === path && $("product-ean")) {
       $("product-ean").textContent = ean || "Non trouvé dans le PDF";
     }
@@ -484,89 +484,84 @@ function route() {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-/* ====== RECHERCHE PAR MODELE, 12NC ET EAN ======
-   La recherche classique reste immédiate.
-   Pour un EAN complet (13 chiffres commençant par 8690), le site lit
-   progressivement les PDF, uniquement si nécessaire, et mémorise leurs EAN.
-   Le cache est lié à la version SHA du fichier pour éviter les données périmées. */
-const eanSearchStoragePrefix = "bekopro-ean-v1:";
-const eanIndex = new Map();
-let eanIndexPromise = null;
-let searchVersion = 0;
-let eanProgress = { done: 0, total: 0, failures: 0 };
-
-function eanCacheKey(item) {
-  return eanSearchStoragePrefix + item.path + ":" + (item.sha || "unknown");
-}
-function eanIndexFor(item) {
-  const key = eanCacheKey(item);
-  if (eanIndex.has(key)) return eanIndex.get(key);
+/* ====== RECHERCHE EAN ======
+   Les PDF sont analysés progressivement lors de la première recherche EAN.
+   Les résultats apparaissent au fur et à mesure, puis sont mis en cache par SHA.
+   Un message explicite évite « Aucun document » pendant l'analyse. */
+const indexedEAN = new Map();
+let indexingEAN = null;
+let searchToken = 0;
+let indexingProgress = {done: 0, total: 0, errors: 0};
+function cacheKeyFor(item) { return "bap-ean-v2:" + item.path + ":" + (item.sha || ""); }
+function getIndexedEAN(item) {
+  const key = cacheKeyFor(item);
+  if (indexedEAN.has(key)) return indexedEAN.get(key);
   try {
-    const cached = localStorage.getItem(eanCacheKey(item));
-    if (cached !== null) {
-      const value = cached || null;
-      eanIndex.set(key, value);
-      eanCache.set(item.path, value);
+    const value = localStorage.getItem(key);
+    if (value !== null) {
+      indexedEAN.set(key, value);
+      eanCache.set(item.path, value || null);
       return value;
     }
-  } catch (_) { /* navigation privée : cache mémoire uniquement */ }
+  } catch (_) {}
   return undefined;
 }
-function storeEAN(item, ean) {
-  eanIndex.set(eanCacheKey(item), ean);
-  eanCache.set(item.path, ean);
-  try { localStorage.setItem(eanCacheKey(item), ean || ""); } catch (_) {}
+function saveIndexedEAN(item, value) {
+  const v = value || "";
+  indexedEAN.set(cacheKeyFor(item), v);
+  eanCache.set(item.path, value || null);
+  try { localStorage.setItem(cacheKeyFor(item), v); } catch (_) {}
 }
-function renderSearchResults(query, version) {
-  if (version !== searchVersion) return;
-  const normalized = norm(query);
-  const matches = tree.filter(i => isDoc(i) && (
-    norm(i.path).includes(normalized) ||
-    (eanIndexFor(i) || "").includes(normalized)
+function refreshSearch() {
+  const query = $("search").value.trim();
+  if (!query) return;
+  const q = norm(query);
+  const matches = tree.filter(item => isDoc(item) && (
+    norm(item.path).includes(q) || (getIndexedEAN(item) || "").includes(q)
   ));
   $("breadcrumb").innerHTML = `<span class="text-slate-900 font-bold">Résultats pour « ${esc(query)} »</span>`;
   renderGrid(matches, true);
-  if (/^8690\d{9}$/.test(normalized) && eanIndexPromise) {
-    $("count").textContent = `${matches.length} résultat(s) · Analyse EAN ${eanProgress.done}/${eanProgress.total} PDF`;
+  if (/^8690\d{9}$/.test(q) && indexingEAN) {
+    $("empty").classList.add("hidden");
+    $("count").textContent = `${matches.length} résultat(s) · Recherche dans les PDF : ${indexingProgress.done}/${indexingProgress.total}`;
   }
 }
-async function buildEANIndex() {
+async function indexEANs() {
   const docs = tree.filter(i => isDoc(i) && ext(i.path) === "pdf");
-  const pending = docs.filter(item => eanIndexFor(item) === undefined);
-  eanProgress = { done: docs.length - pending.length, total: docs.length, failures: 0 };
-  let next = 0;
+  const remaining = docs.filter(i => getIndexedEAN(i) === undefined);
+  indexingProgress = {done: docs.length - remaining.length, total: docs.length, errors: 0};
+  let cursor = 0;
   async function worker() {
-    while (next < pending.length) {
-      const item = pending[next++];
+    while (cursor < remaining.length) {
+      const item = remaining[cursor++];
       try {
         const ean = await readEANFromPDF(item.path);
-        storeEAN(item, ean);
+        saveIndexedEAN(item, ean);
       } catch (error) {
-        eanProgress.failures++;
-        console.warn("EAN non indexé :", item.path, error);
-        // Échec temporaire : ne pas mémoriser un faux « aucun EAN ».
+        indexingProgress.errors++;
+        console.warn("PDF non indexé :", item.path, error);
       }
-      eanProgress.done++;
-      const input = $("search").value.trim();
-      if (/^8690\d{9}$/.test(norm(input))) renderSearchResults(input, searchVersion);
+      indexingProgress.done++;
+      if (/^8690\d{9}$/.test(norm($("search").value.trim()))) refreshSearch();
     }
   }
-  await Promise.all(Array.from({ length: Math.min(3, pending.length) }, worker));
+  await Promise.all(Array.from({length: Math.min(3, remaining.length)}, () => worker()));
 }
-$("search").addEventListener("input", async e => {
-  const query = e.target.value.trim();
-  const version = ++searchVersion;
-  if (!query) return route();
-  renderSearchResults(query, version);
-  // On ne télécharge pas tous les PDF pour une recherche ordinaire.
-  if (!/^8690\d{9}$/.test(norm(query))) return;
-  if (!eanIndexPromise) {
-    eanIndexPromise = buildEANIndex().finally(() => { eanIndexPromise = null; });
-  }
-  await eanIndexPromise;
-  renderSearchResults(query, version);
-  if (version === searchVersion && eanProgress.failures) {
-    $("count").textContent += ` · ${eanProgress.failures} PDF non lisible(s)`;
+$("search").addEventListener("input", () => {
+  const q = norm($("search").value.trim());
+  searchToken++;
+  if (!q) return route();
+  refreshSearch();
+  // Le code EAN commence par 8690 et contient exactement 13 chiffres.
+  if (!/^8690\d{9}$/.test(q)) return;
+  if (!indexingEAN) {
+    indexingEAN = indexEANs().finally(() => {
+      indexingEAN = null;
+      if ($("search").value.trim()) refreshSearch();
+      if (indexingProgress.errors && /^8690\d{9}$/.test(norm($("search").value.trim()))) {
+        $("count").textContent += ` · ${indexingProgress.errors} PDF non analysé(s)`;
+      }
+    });
   }
 });
 
